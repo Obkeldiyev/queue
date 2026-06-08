@@ -1,0 +1,1448 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  TRIAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  TRIAL
+}
+
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+  LOGO
+  BANNER
+  THUMBNAIL
+  ICON
+}
+
+enum DeviceType {
+  TICKET_KIOSK
+  TICKET_PRINTER
+  QUEUE_DISPLAY
+  COUNTER_DISPLAY
+  OPERATOR_KEYBOARD
+  QR_SCANNER
+  MEDIA_DISPLAY
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+  UNREGISTERED
+}
+
+enum QueueType {
+  SEQUENTIAL
+  PRIORITY
+  SMART
+  APPOINTMENT
+}
+
+enum TicketStatus {
+  WAITING
+  CALLED
+  SERVING
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  TRANSFERRED
+}
+
+enum QrCodeType {
+  QUEUE
+  ORDER
+  CHECK_IN
+  PAGE
+  PROMOTION
+  PAYMENT
+  DEVICE
+}
+
+enum QrTargetType {
+  TICKET
+  ORDER
+  PAGE
+  BRANCH
+  PRODUCT
+  SERVICE
+}
+
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ComponentType {
+  TEXT
+  HEADING
+  IMAGE
+  VIDEO
+  BUTTON
+  FORM
+  MAP
+  QUEUE_BUTTON
+  ORDER_BUTTON
+  PRODUCT_GRID
+  FAQ
+  CAROUSEL
+  BANNER
+  HTML
+  QR_BLOCK
+  CONTACT_BLOCK
+  DIVIDER
+  SPACER
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  PARTIAL
+  REFUNDED
+  FAILED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  CLICK
+  PAYME
+  UZUM
+  STRIPE
+  PAYPAL
+  TELEGRAM_PAY
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  EMAIL
+  TELEGRAM
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  DELIVERED
+  READ
+}
+
+enum RoleType {
+  PLATFORM_ADMIN
+  COMPANY_ADMIN
+  BRANCH_MANAGER
+  SUPERVISOR
+  OPERATOR
+  CONTENT_MANAGER
+  VIEWER
+  CUSTOM
+}
+
+enum AdvertisementStatus {
+  ACTIVE
+  INACTIVE
+  SCHEDULED
+  EXPIRED
+}
+
+enum ServiceStatus {
+  ACTIVE
+  INACTIVE
+  PAUSED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  ARRIVED
+  EXPIRED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+  ARCHIVED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  CALL_NEXT
+  COMPLETE_SERVICE
+  TRANSFER
+  PRINT_TICKET
+  SCAN_QR
+  DEVICE_CONNECT
+  DEVICE_DISCONNECT
+  PAYMENT
+  REFUND
+  PUBLISH_PAGE
+  TOGGLE_STATUS
+}
+
+model Subscription {
+  id                    String               @id @default(uuid()) @db.Uuid
+  name                  String               @db.VarChar(120)
+  description           String?              @db.Text
+  monthly_price         Decimal              @db.Decimal(12, 2)
+  yearly_price          Decimal              @db.Decimal(12, 2)
+  max_branches          Int                  @default(1)
+  max_users             Int                  @default(5)
+  max_devices           Int                  @default(10)
+  max_storage_gb        Int                  @default(5)
+  online_queue_enabled  Boolean              @default(false)
+  ordering_enabled      Boolean              @default(false)
+  analytics_enabled     Boolean              @default(false)
+  custom_domain_enabled Boolean              @default(false)
+  api_access_enabled    Boolean              @default(false)
+  is_active             Boolean              @default(true)
+  sort_order            Int                  @default(0)
+  created_at            DateTime             @default(now())
+  updated_at            DateTime             @updatedAt
+
+  company_subscriptions CompanySubscription[]
+
+  @@map("subscriptions")
+}
+
+model CompanySubscription {
+  id              String             @id @default(uuid()) @db.Uuid
+  company_id      String             @db.Uuid
+  subscription_id String             @db.Uuid
+  started_at      DateTime           @default(now())
+  expires_at      DateTime
+  status          SubscriptionStatus @default(ACTIVE)
+  payment_method  PaymentMethod?
+  amount_paid     Decimal?           @db.Decimal(12, 2)
+  created_at      DateTime           @default(now())
+  updated_at      DateTime           @updatedAt
+
+  company      Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscription_id], references: [id])
+
+  @@index([company_id])
+  @@index([status])
+  @@map("company_subscriptions")
+}
+
+model PlatformUser {
+  id            String       @id @default(uuid()) @db.Uuid
+  first_name    String       @db.VarChar(80)
+  last_name     String       @db.VarChar(80)
+  email         String       @unique @db.VarChar(200)
+  password_hash String       @db.VarChar(255)
+  status        UserStatus   @default(ACTIVE)
+  last_login_at DateTime?
+  created_at    DateTime     @default(now())
+  updated_at    DateTime     @updatedAt
+
+  roles         PlatformUserRole[]
+  audit_logs    AuditLog[]         @relation("PlatformUserAuditLogs")
+
+  @@index([email])
+  @@map("platform_users")
+}
+
+model PlatformRole {
+  id          String             @id @default(uuid()) @db.Uuid
+  name        String             @unique @db.VarChar(80)
+  description String?            @db.Text
+  created_at  DateTime           @default(now())
+
+  users       PlatformUserRole[]
+  permissions PlatformRolePermission[]
+
+  @@map("platform_roles")
+}
+
+model PlatformPermission {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique @db.VarChar(100)
+  name        String @db.VarChar(120)
+  description String? @db.Text
+  module      String @db.VarChar(80)
+
+  roles PlatformRolePermission[]
+
+  @@map("platform_permissions")
+}
+
+model PlatformUserRole {
+  platform_user_id String @db.Uuid
+  platform_role_id String @db.Uuid
+
+  platform_user PlatformUser @relation(fields: [platform_user_id], references: [id], onDelete: Cascade)
+  platform_role PlatformRole @relation(fields: [platform_role_id], references: [id], onDelete: Cascade)
+
+  @@id([platform_user_id, platform_role_id])
+  @@map("platform_user_roles")
+}
+
+model PlatformRolePermission {
+  platform_role_id       String @db.Uuid
+  platform_permission_id String @db.Uuid
+
+  platform_role       PlatformRole       @relation(fields: [platform_role_id], references: [id], onDelete: Cascade)
+  platform_permission PlatformPermission @relation(fields: [platform_permission_id], references: [id], onDelete: Cascade)
+
+  @@id([platform_role_id, platform_permission_id])
+  @@map("platform_role_permissions")
+}
+
+model Company {
+  id               String        @id @default(uuid()) @db.Uuid
+  name             String        @db.VarChar(200)
+  slug             String        @unique @db.VarChar(120)
+  logo_media_id    String?       @db.Uuid
+  primary_color    String?       @db.VarChar(10)
+  secondary_color  String?       @db.VarChar(10)
+  phone            String?       @db.VarChar(30)
+  email            String?       @db.VarChar(200)
+  website          String?       @db.VarChar(255)
+  address          String?       @db.Text
+  timezone         String        @default("Asia/Tashkent") @db.VarChar(60)
+  locale           String        @default("uz") @db.VarChar(10)
+  status           CompanyStatus @default(TRIAL)
+  created_at       DateTime      @default(now())
+  updated_at       DateTime      @updatedAt
+
+  logo_media            MediaFile?            @relation("CompanyLogo", fields: [logo_media_id], references: [id])
+  branches              Branch[]
+  users                 CompanyUser[]
+  roles                 CompanyRole[]
+  media_files           MediaFile[]           @relation("CompanyMedia")
+  themes                Theme[]
+  pages                 Page[]
+  menus                 Menu[]
+  services              Service[]
+  queue_groups          QueueGroup[]
+  counters              Counter[]
+  devices               Device[]
+  qr_codes              QrCode[]
+  customers             Customer[]
+  products              Product[]
+  product_categories    ProductCategory[]
+  orders                Order[]
+  order_stages          OrderStage[]
+  notification_templates NotificationTemplate[]
+  advertisements        Advertisement[]
+  company_subscriptions CompanySubscription[]
+  ticket_templates      TicketTemplate[]
+  audit_logs            AuditLog[]
+  analytics_snapshots   AnalyticsSnapshot[]
+  surveys               Survey[]
+
+  @@index([slug])
+  @@index([status])
+  @@map("companies")
+}
+
+model CompanyUser {
+  id            String     @id @default(uuid()) @db.Uuid
+  company_id    String     @db.Uuid
+  branch_id     String?    @db.Uuid
+  first_name    String     @db.VarChar(80)
+  last_name     String     @db.VarChar(80)
+  email         String     @db.VarChar(200)
+  phone         String?    @db.VarChar(30)
+  password_hash String     @db.VarChar(255)
+  avatar_url    String?    @db.VarChar(500)
+  status        UserStatus @default(ACTIVE)
+  last_login_at DateTime?
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+
+  company  Company  @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch   Branch?  @relation(fields: [branch_id], references: [id])
+  roles    CompanyUserRole[]
+  counter_sessions CounterSession[]
+  audit_logs       AuditLog[]         @relation("CompanyUserAuditLogs")
+  served_tickets   Ticket[]           @relation("ServedBy")
+  created_pages    PageVersion[]
+
+  @@unique([company_id, email])
+  @@index([company_id])
+  @@index([branch_id])
+  @@map("company_users")
+}
+
+model CompanyRole {
+  id          String   @id @default(uuid()) @db.Uuid
+  company_id  String   @db.Uuid
+  name        String   @db.VarChar(80)
+  type        RoleType @default(CUSTOM)
+  description String?  @db.Text
+  is_system   Boolean  @default(false)
+  created_at  DateTime @default(now())
+
+  company     Company            @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  users       CompanyUserRole[]
+  permissions CompanyRolePermission[]
+
+  @@unique([company_id, name])
+  @@index([company_id])
+  @@map("company_roles")
+}
+
+model CompanyPermission {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique @db.VarChar(100)
+  name        String @db.VarChar(120)
+  description String? @db.Text
+  module      String @db.VarChar(80)
+
+  roles CompanyRolePermission[]
+
+  @@map("company_permissions")
+}
+
+model CompanyUserRole {
+  company_user_id String @db.Uuid
+  company_role_id String @db.Uuid
+
+  company_user CompanyUser @relation(fields: [company_user_id], references: [id], onDelete: Cascade)
+  company_role CompanyRole @relation(fields: [company_role_id], references: [id], onDelete: Cascade)
+
+  @@id([company_user_id, company_role_id])
+  @@map("company_user_roles")
+}
+
+model CompanyRolePermission {
+  company_role_id       String @db.Uuid
+  company_permission_id String @db.Uuid
+
+  company_role       CompanyRole       @relation(fields: [company_role_id], references: [id], onDelete: Cascade)
+  company_permission CompanyPermission @relation(fields: [company_permission_id], references: [id], onDelete: Cascade)
+
+  @@id([company_role_id, company_permission_id])
+  @@map("company_role_permissions")
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  user_id    String   @db.Uuid
+  user_type  String   @db.VarChar(30) // "platform_user" | "company_user" | "customer"
+  token_hash String   @unique @db.VarChar(255)
+  ip_address String?  @db.VarChar(50)
+  user_agent String?  @db.VarChar(500)
+  expires_at DateTime
+  revoked    Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  @@index([user_id, user_type])
+  @@index([token_hash])
+  @@map("refresh_tokens")
+}
+
+model Branch {
+  id            String      @id @default(uuid()) @db.Uuid
+  company_id    String      @db.Uuid
+  name          String      @db.VarChar(200)
+  phone         String?     @db.VarChar(30)
+  email         String?     @db.VarChar(200)
+  address       String?     @db.Text
+  latitude      Decimal?    @db.Decimal(10, 8)
+  longitude     Decimal?    @db.Decimal(11, 8)
+  working_hours Json?       // { mon: {open:"09:00", close:"18:00"}, ... }
+  timezone      String?     @db.VarChar(60)
+  status        BranchStatus @default(ACTIVE)
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+
+  company        Company         @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  users          CompanyUser[]
+  queue_groups   QueueGroup[]
+  counters       Counter[]
+  devices        Device[]
+  qr_codes       QrCode[]
+  orders         Order[]
+  tickets        Ticket[]
+  reservations   QueueReservation[]
+  analytics      AnalyticsSnapshot[]
+  advertisements BranchAdvertisement[]
+  surveys        BranchSurvey[]
+
+  @@index([company_id])
+  @@map("branches")
+}
+
+model MediaFile {
+  id               String    @id @default(uuid()) @db.Uuid
+  company_id       String    @db.Uuid
+  uploaded_by_id   String?   @db.Uuid
+  uploaded_by_type String?   @db.VarChar(30) // "platform_user" | "company_user"
+  type             MediaType
+  mime_type        String    @db.VarChar(120)
+  filename         String    @db.VarChar(255)
+  original_name    String    @db.VarChar(255)
+  size_bytes       BigInt
+  path             String    @db.VarChar(500)
+  cdn_url          String?   @db.VarChar(500)
+  thumbnail_url    String?   @db.VarChar(500)
+  duration_seconds Int?
+  width            Int?
+  height           Int?
+  alt_text         String?   @db.VarChar(255)
+  metadata         Json?
+  is_public        Boolean   @default(false)
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  company Company @relation("CompanyMedia", fields: [company_id], references: [id], onDelete: Cascade)
+
+  company_logos         Company[]           @relation("CompanyLogo")
+  theme_logos           Theme[]             @relation("ThemeLogo")
+  theme_favicons        Theme[]             @relation("ThemeFavicon")
+  page_components       PageComponent[]     @relation("ComponentMedia")
+  product_images        Product[]           @relation("ProductImage")
+  product_category_images ProductCategory[] @relation("CategoryImage")
+  advertisement_media   Advertisement[]     @relation("AdMedia")
+  customer_avatars      Customer[]          @relation("CustomerAvatar")
+  qr_code_images        QrCode[]            @relation("QrImage")
+  menu_icons            Menu[]              @relation("MenuIcon")
+  service_icons         Service[]           @relation("ServiceIcon")
+  ticket_template_logos TicketTemplate[]    @relation("TicketLogo")
+
+  @@index([company_id])
+  @@index([type])
+  @@map("media_files")
+}
+
+model Theme {
+  id                String   @id @default(uuid()) @db.Uuid
+  company_id        String   @db.Uuid
+  name              String   @db.VarChar(120)
+  primary_color     String?  @db.VarChar(10)
+  secondary_color   String?  @db.VarChar(10)
+  accent_color      String?  @db.VarChar(10)
+  background_color  String?  @db.VarChar(10)
+  text_color        String?  @db.VarChar(10)
+  font_family       String?  @db.VarChar(80)
+  border_radius     String?  @db.VarChar(20)
+  logo_media_id     String?  @db.Uuid
+  favicon_media_id  String?  @db.Uuid
+  custom_css        String?  @db.Text
+  is_active         Boolean  @default(false)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  company        Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  logo_media     MediaFile? @relation("ThemeLogo", fields: [logo_media_id], references: [id])
+  favicon_media  MediaFile? @relation("ThemeFavicon", fields: [favicon_media_id], references: [id])
+
+  @@index([company_id])
+  @@map("themes")
+}
+
+model Page {
+  id              String     @id @default(uuid()) @db.Uuid
+  company_id      String     @db.Uuid
+  name            String     @db.VarChar(200)
+  slug            String     @db.VarChar(200)
+  title           String?    @db.VarChar(255)
+  description     String?    @db.Text
+  seo_title       String?    @db.VarChar(255)
+  seo_description String?    @db.Text
+  status          PageStatus @default(DRAFT)
+  is_homepage     Boolean    @default(false)
+  template        String?    @db.VarChar(80) // "bank", "clinic", "restaurant" etc.
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  company  Company       @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  versions PageVersion[]
+  menus    Menu[]
+
+  @@unique([company_id, slug])
+  @@index([company_id])
+  @@map("pages")
+}
+
+model PageVersion {
+  id          String   @id @default(uuid()) @db.Uuid
+  page_id     String   @db.Uuid
+  version     Int      @default(1)
+  published   Boolean  @default(false)
+  created_by  String?  @db.Uuid
+  snapshot    Json?    // Full layout snapshot for rollback
+  created_at  DateTime @default(now())
+
+  page        Page          @relation(fields: [page_id], references: [id], onDelete: Cascade)
+  created_by_user CompanyUser? @relation(fields: [created_by], references: [id])
+  components  PageComponent[]
+
+  @@index([page_id])
+  @@map("page_versions")
+}
+
+model PageComponent {
+  id                  String        @id @default(uuid()) @db.Uuid
+  page_version_id     String        @db.Uuid
+  component_type      ComponentType
+  parent_component_id String?       @db.Uuid
+  x_position          Float         @default(0)
+  y_position          Float         @default(0)
+  width               Float         @default(100)  // percentage
+  height              Float?
+  sort_order          Int           @default(0)
+  // Drag-and-drop layout state
+  col_span            Int           @default(12)   // 12-column grid
+  row_span            Int           @default(1)
+  is_locked           Boolean       @default(false)
+  is_hidden           Boolean       @default(false)
+  settings            Json?         // All visual/content config
+  styles              Json?         // Inline styles object
+  mobile_styles       Json?         // Responsive overrides
+  animations          Json?         // Entrance/hover animations
+  media_id            String?       @db.Uuid
+  created_at          DateTime      @default(now())
+  updated_at          DateTime      @updatedAt
+
+  page_version     PageVersion    @relation(fields: [page_version_id], references: [id], onDelete: Cascade)
+  parent_component PageComponent? @relation("ComponentChildren", fields: [parent_component_id], references: [id])
+  children         PageComponent[] @relation("ComponentChildren")
+  media            MediaFile?     @relation("ComponentMedia", fields: [media_id], references: [id])
+
+  @@index([page_version_id])
+  @@index([parent_component_id])
+  @@map("page_components")
+}
+
+model Menu {
+  id             String   @id @default(uuid()) @db.Uuid
+  company_id     String   @db.Uuid
+  parent_id      String?  @db.Uuid
+  name           String   @db.VarChar(120)
+  label          String?  @db.VarChar(120) // Display label (translatable)
+  icon_media_id  String?  @db.Uuid
+  icon_class     String?  @db.VarChar(80)  // e.g. "home-icon"
+  url            String?  @db.VarChar(500)
+  page_id        String?  @db.Uuid
+  target         String?  @db.VarChar(20)  // "_blank" | "_self"
+  sort_order     Int      @default(0)
+  is_visible     Boolean  @default(true)
+  requires_auth  Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  company    Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  parent     Menu?      @relation("MenuChildren", fields: [parent_id], references: [id])
+  children   Menu[]     @relation("MenuChildren")
+  page       Page?      @relation(fields: [page_id], references: [id])
+  icon_media MediaFile? @relation("MenuIcon", fields: [icon_media_id], references: [id])
+
+  @@index([company_id])
+  @@index([parent_id])
+  @@map("menus")
+}
+
+model Service {
+  id                    String        @id @default(uuid()) @db.Uuid
+  company_id            String        @db.Uuid
+  name                  String        @db.VarChar(200)
+  description           String?       @db.Text
+  icon_media_id         String?       @db.Uuid
+  color                 String?       @db.VarChar(10)
+  estimated_time_mins   Int?
+  working_hours         Json?
+  priority_level        Int           @default(0)
+  status                ServiceStatus @default(ACTIVE)
+  created_at            DateTime      @default(now())
+  updated_at            DateTime      @updatedAt
+
+  company      Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  icon_media   MediaFile?   @relation("ServiceIcon", fields: [icon_media_id], references: [id])
+  queue_groups QueueGroup[]
+
+  @@index([company_id])
+  @@map("services")
+}
+
+model QueueGroup {
+  id                    String    @id @default(uuid()) @db.Uuid
+  company_id            String    @db.Uuid
+  branch_id             String    @db.Uuid
+  service_id            String?   @db.Uuid
+  name                  String    @db.VarChar(200)
+  prefix                String    @db.VarChar(10)
+  // Number format: "PREFIX-{NUM:4}" or "{BRANCH}-{PREFIX}-{NUM:3}"
+  number_format         String    @default("{PREFIX}{NUM:3}") @db.VarChar(80)
+  queue_type            QueueType @default(SEQUENTIAL)
+  daily_limit           Int?
+  daily_reset_time      String?   @db.VarChar(10)  // "00:00"
+  current_number        Int       @default(0)
+  priority_weight       Int       @default(0)
+  online_enabled        Boolean   @default(false)
+  auto_recall_enabled   Boolean   @default(false)
+  auto_recall_after_sec Int       @default(30)
+  no_show_after_sec     Int       @default(300)
+  working_hours         Json?
+  is_active             Boolean   @default(true)
+  sort_order            Int       @default(0)
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  company      Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch       Branch           @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  service      Service?         @relation(fields: [service_id], references: [id])
+  counter_queues CounterQueue[]
+  tickets       Ticket[]
+  reservations  QueueReservation[]
+
+  @@index([company_id])
+  @@index([branch_id])
+  @@map("queue_groups")
+}
+
+model Counter {
+  id          String   @id @default(uuid()) @db.Uuid
+  company_id  String   @db.Uuid
+  branch_id   String   @db.Uuid
+  name        String   @db.VarChar(100)
+  number      Int
+  description String?  @db.VarChar(255)
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  company        Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch         Branch           @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  queue_groups   CounterQueue[]
+  sessions       CounterSession[]
+  tickets        Ticket[]
+  devices        Device[]
+
+  @@unique([branch_id, number])
+  @@index([company_id])
+  @@index([branch_id])
+  @@map("counters")
+}
+
+model CounterQueue {
+  counter_id     String @db.Uuid
+  queue_group_id String @db.Uuid
+  sort_order     Int    @default(0)
+
+  counter     Counter    @relation(fields: [counter_id], references: [id], onDelete: Cascade)
+  queue_group QueueGroup @relation(fields: [queue_group_id], references: [id], onDelete: Cascade)
+
+  @@id([counter_id, queue_group_id])
+  @@map("counter_queues")
+}
+
+model CounterSession {
+  id             String    @id @default(uuid()) @db.Uuid
+  counter_id     String    @db.Uuid
+  company_user_id String   @db.Uuid
+  started_at     DateTime  @default(now())
+  ended_at       DateTime?
+  is_active      Boolean   @default(true)
+
+  counter      Counter     @relation(fields: [counter_id], references: [id])
+  company_user CompanyUser @relation(fields: [company_user_id], references: [id])
+  tickets      Ticket[]
+
+  @@index([counter_id])
+  @@map("counter_sessions")
+}
+
+model TicketTemplate {
+  id               String   @id @default(uuid()) @db.Uuid
+  company_id       String   @db.Uuid
+  name             String   @db.VarChar(120)
+  logo_media_id    String?  @db.Uuid
+  // Layout is stored as JSON drag-and-drop config
+  layout           Json     // Array of positioned elements
+  width_mm         Int      @default(80)
+  height_mm        Int      @default(150)
+  footer_text      String?  @db.Text
+  show_qr          Boolean  @default(true)
+  show_barcode     Boolean  @default(false)
+  is_default       Boolean  @default(false)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  company    Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  logo_media MediaFile? @relation("TicketLogo", fields: [logo_media_id], references: [id])
+
+  @@index([company_id])
+  @@map("ticket_templates")
+}
+
+model Ticket {
+  id               String       @id @default(uuid()) @db.Uuid
+  queue_group_id   String       @db.Uuid
+  branch_id        String       @db.Uuid
+  counter_id       String?      @db.Uuid
+  counter_session_id String?    @db.Uuid
+  reservation_id   String?      @db.Uuid @unique
+  customer_id      String?      @db.Uuid
+  served_by_id     String?      @db.Uuid
+  ticket_number    String       @db.VarChar(30)
+  status           TicketStatus @default(WAITING)
+  priority         Int          @default(0)
+  called_at        DateTime?
+  serving_started_at DateTime?
+  completed_at     DateTime?
+  wait_time_sec    Int?
+  service_time_sec Int?
+  is_online        Boolean      @default(false)
+  notes            String?      @db.Text
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+
+  queue_group     QueueGroup       @relation(fields: [queue_group_id], references: [id])
+  branch          Branch           @relation(fields: [branch_id], references: [id])
+  counter         Counter?         @relation(fields: [counter_id], references: [id])
+  counter_session CounterSession?  @relation(fields: [counter_session_id], references: [id])
+  reservation     QueueReservation? @relation(fields: [reservation_id], references: [id])
+  customer        Customer?        @relation(fields: [customer_id], references: [id])
+  served_by       CompanyUser?     @relation("ServedBy", fields: [served_by_id], references: [id])
+  history         TicketHistory[]
+  order           Order?
+
+  @@index([queue_group_id])
+  @@index([branch_id])
+  @@index([status])
+  @@index([ticket_number])
+  @@map("tickets")
+}
+
+model TicketHistory {
+  id           String       @id @default(uuid()) @db.Uuid
+  ticket_id    String       @db.Uuid
+  from_status  TicketStatus?
+  to_status    TicketStatus
+  changed_by   String?      @db.Uuid
+  changed_type String?      @db.VarChar(30)
+  note         String?      @db.Text
+  created_at   DateTime     @default(now())
+
+  ticket Ticket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  @@index([ticket_id])
+  @@map("ticket_history")
+}
+
+model QueueReservation {
+  id               String            @id @default(uuid()) @db.Uuid
+  customer_id      String            @db.Uuid
+  queue_group_id   String            @db.Uuid
+  branch_id        String            @db.Uuid
+  reservation_time DateTime
+  arrival_deadline DateTime
+  arrival_method   String?           @db.VarChar(30) // "QR" | "GPS" | "PIN" | "KIOSK"
+  confirmed_at     DateTime?
+  status           ReservationStatus @default(PENDING)
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+
+  customer    Customer   @relation(fields: [customer_id], references: [id])
+  queue_group QueueGroup @relation(fields: [queue_group_id], references: [id])
+  branch      Branch     @relation(fields: [branch_id], references: [id])
+  ticket      Ticket?
+
+  @@index([customer_id])
+  @@index([queue_group_id])
+  @@map("queue_reservations")
+}
+
+model QrCode {
+  id             String       @id @default(uuid()) @db.Uuid
+  company_id     String       @db.Uuid
+  branch_id      String?      @db.Uuid
+  code           String       @unique @db.VarChar(100)
+  type           QrCodeType
+  target_type    QrTargetType?
+  target_id      String?      @db.Uuid
+  image_media_id String?      @db.Uuid
+  background_color String?    @db.VarChar(10)
+  foreground_color String?    @db.VarChar(10)
+  expires_at     DateTime?
+  scan_count     Int          @default(0)
+  is_active      Boolean      @default(true)
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+
+  company     Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch      Branch?    @relation(fields: [branch_id], references: [id])
+  image_media MediaFile? @relation("QrImage", fields: [image_media_id], references: [id])
+  scans       QrScan[]
+
+  @@index([company_id])
+  @@index([code])
+  @@map("qr_codes")
+}
+
+model QrScan {
+  id          String   @id @default(uuid()) @db.Uuid
+  qr_code_id  String   @db.Uuid
+  customer_id String?  @db.Uuid
+  device_id   String?  @db.Uuid
+  ip_address  String?  @db.VarChar(50)
+  latitude    Decimal? @db.Decimal(10, 8)
+  longitude   Decimal? @db.Decimal(11, 8)
+  user_agent  String?  @db.VarChar(500)
+  created_at  DateTime @default(now())
+
+  qr_code  QrCode    @relation(fields: [qr_code_id], references: [id])
+  customer Customer? @relation(fields: [customer_id], references: [id])
+  device   Device?   @relation(fields: [device_id], references: [id])
+
+  @@index([qr_code_id])
+  @@map("qr_scans")
+}
+
+model Customer {
+  id             String     @id @default(uuid()) @db.Uuid
+  company_id     String     @db.Uuid
+  first_name     String?    @db.VarChar(80)
+  last_name      String?    @db.VarChar(80)
+  phone          String?    @db.VarChar(30)
+  email          String?    @db.VarChar(200)
+  avatar_media_id String?   @db.Uuid
+  birth_date     DateTime?
+  fcm_token      String?    @db.VarChar(500)
+  telegram_id    BigInt?
+  status         UserStatus @default(ACTIVE)
+  created_at     DateTime   @default(now())
+  updated_at     DateTime   @updatedAt
+
+  company      Company        @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  avatar_media MediaFile?     @relation("CustomerAvatar", fields: [avatar_media_id], references: [id])
+  favorites    CustomerFavorite[]
+  tickets      Ticket[]
+  reservations QueueReservation[]
+  orders       Order[]
+  carts        Cart[]
+  qr_scans     QrScan[]
+  notifications Notification[]
+  survey_responses SurveyResponse[]
+
+  @@unique([company_id, phone])
+  @@index([company_id])
+  @@map("customers")
+}
+
+model CustomerFavorite {
+  id          String   @id @default(uuid()) @db.Uuid
+  customer_id String   @db.Uuid
+  company_id  String   @db.Uuid
+  branch_id   String?  @db.Uuid
+  created_at  DateTime @default(now())
+
+  customer Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
+  @@unique([customer_id, company_id, branch_id])
+  @@index([customer_id])
+  @@map("customer_favorites")
+}
+
+model ProductCategory {
+  id              String   @id @default(uuid()) @db.Uuid
+  company_id      String   @db.Uuid
+  parent_id       String?  @db.Uuid
+  name            String   @db.VarChar(200)
+  description     String?  @db.Text
+  image_media_id  String?  @db.Uuid
+  sort_order      Int      @default(0)
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  company     Company         @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  parent      ProductCategory? @relation("CategoryChildren", fields: [parent_id], references: [id])
+  children    ProductCategory[] @relation("CategoryChildren")
+  image_media MediaFile?      @relation("CategoryImage", fields: [image_media_id], references: [id])
+  products    Product[]
+
+  @@index([company_id])
+  @@map("product_categories")
+}
+
+model Product {
+  id                String        @id @default(uuid()) @db.Uuid
+  company_id        String        @db.Uuid
+  category_id       String?       @db.Uuid
+  name              String        @db.VarChar(200)
+  description       String?       @db.Text
+  price             Decimal       @db.Decimal(12, 2)
+  discount_price    Decimal?      @db.Decimal(12, 2)
+  sku               String?       @db.VarChar(100)
+  image_media_id    String?       @db.Uuid
+  preparation_time_mins Int?
+  sort_order        Int           @default(0)
+  is_available      Boolean       @default(true)
+  status            ProductStatus @default(ACTIVE)
+  metadata          Json?
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+
+  company     Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  category    ProductCategory? @relation(fields: [category_id], references: [id])
+  image_media MediaFile?       @relation("ProductImage", fields: [image_media_id], references: [id])
+  modifiers   ProductModifier[]
+  cart_items  CartItem[]
+  order_items OrderItem[]
+
+  @@index([company_id])
+  @@index([category_id])
+  @@map("products")
+}
+
+model ProductModifier {
+  id          String   @id @default(uuid()) @db.Uuid
+  product_id  String   @db.Uuid
+  name        String   @db.VarChar(120)
+  price       Decimal  @db.Decimal(12, 2)
+  is_required Boolean  @default(false)
+  created_at  DateTime @default(now())
+
+  product    Product         @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  cart_items CartItemModifier[]
+  order_items OrderItemModifier[]
+
+  @@index([product_id])
+  @@map("product_modifiers")
+}
+
+model Cart {
+  id          String   @id @default(uuid()) @db.Uuid
+  customer_id String   @db.Uuid
+  company_id  String   @db.Uuid
+  branch_id   String?  @db.Uuid
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  customer  Customer   @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  items     CartItem[]
+
+  @@unique([customer_id, company_id])
+  @@map("carts")
+}
+
+model CartItem {
+  id         String @id @default(uuid()) @db.Uuid
+  cart_id    String @db.Uuid
+  product_id String @db.Uuid
+  quantity   Int    @default(1)
+  notes      String? @db.Text
+
+  cart       Cart    @relation(fields: [cart_id], references: [id], onDelete: Cascade)
+  product    Product @relation(fields: [product_id], references: [id])
+  modifiers  CartItemModifier[]
+
+  @@index([cart_id])
+  @@map("cart_items")
+}
+
+model CartItemModifier {
+  cart_item_id        String @db.Uuid
+  product_modifier_id String @db.Uuid
+
+  cart_item        CartItem        @relation(fields: [cart_item_id], references: [id], onDelete: Cascade)
+  product_modifier ProductModifier @relation(fields: [product_modifier_id], references: [id])
+
+  @@id([cart_item_id, product_modifier_id])
+  @@map("cart_item_modifiers")
+}
+
+model OrderStage {
+  id         String   @id @default(uuid()) @db.Uuid
+  company_id String   @db.Uuid
+  name       String   @db.VarChar(80)
+  color      String?  @db.VarChar(10)
+  position   Int      @default(0)
+  is_final   Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  company Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  history OrderStageHistory[]
+
+  @@index([company_id])
+  @@map("order_stages")
+}
+
+model Order {
+  id              String        @id @default(uuid()) @db.Uuid
+  company_id      String        @db.Uuid
+  branch_id       String        @db.Uuid
+  customer_id     String?       @db.Uuid
+  queue_ticket_id String?       @db.Uuid @unique
+  order_number    String        @db.VarChar(30)
+  subtotal        Decimal       @db.Decimal(12, 2)
+  discount        Decimal       @default(0) @db.Decimal(12, 2)
+  tax             Decimal       @default(0) @db.Decimal(12, 2)
+  total           Decimal       @db.Decimal(12, 2)
+  payment_method  PaymentMethod?
+  payment_status  PaymentStatus @default(UNPAID)
+  status          OrderStatus   @default(PENDING)
+  notes           String?       @db.Text
+  estimated_ready_at DateTime?
+  completed_at    DateTime?
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  company      Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch       Branch     @relation(fields: [branch_id], references: [id])
+  customer     Customer?  @relation(fields: [customer_id], references: [id])
+  queue_ticket Ticket?    @relation(fields: [queue_ticket_id], references: [id])
+  items        OrderItem[]
+  stage_history OrderStageHistory[]
+  payments     Payment[]
+
+  @@index([company_id])
+  @@index([branch_id])
+  @@index([order_number])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  order_id    String  @db.Uuid
+  product_id  String  @db.Uuid
+  quantity    Int     @default(1)
+  unit_price  Decimal @db.Decimal(12, 2)
+  total_price Decimal @db.Decimal(12, 2)
+  notes       String? @db.Text
+
+  order     Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [product_id], references: [id])
+  modifiers OrderItemModifier[]
+
+  @@index([order_id])
+  @@map("order_items")
+}
+
+model OrderItemModifier {
+  order_item_id       String  @db.Uuid
+  product_modifier_id String  @db.Uuid
+  price               Decimal @db.Decimal(12, 2)
+
+  order_item       OrderItem       @relation(fields: [order_item_id], references: [id], onDelete: Cascade)
+  product_modifier ProductModifier @relation(fields: [product_modifier_id], references: [id])
+
+  @@id([order_item_id, product_modifier_id])
+  @@map("order_item_modifiers")
+}
+
+model OrderStageHistory {
+  id         String    @id @default(uuid()) @db.Uuid
+  order_id   String    @db.Uuid
+  stage_id   String    @db.Uuid
+  entered_at DateTime  @default(now())
+  left_at    DateTime?
+  changed_by String?   @db.Uuid
+
+  order Order      @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  stage OrderStage @relation(fields: [stage_id], references: [id])
+
+  @@index([order_id])
+  @@map("order_stage_history")
+}
+
+model Payment {
+  id             String        @id @default(uuid()) @db.Uuid
+  order_id       String        @db.Uuid
+  amount         Decimal       @db.Decimal(12, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(UNPAID)
+  external_id    String?       @db.VarChar(200) // Payment gateway transaction ID
+  gateway        String?       @db.VarChar(50)
+  payload        Json?
+  paid_at        DateTime?
+  created_at     DateTime      @default(now())
+
+  order Order @relation(fields: [order_id], references: [id])
+
+  @@index([order_id])
+  @@map("payments")
+}
+
+model Device {
+  id             String       @id @default(uuid()) @db.Uuid
+  company_id     String       @db.Uuid
+  branch_id      String       @db.Uuid
+  counter_id     String?      @db.Uuid
+  device_type    DeviceType
+  name           String       @db.VarChar(120)
+  serial_number  String?      @db.VarChar(100)
+  ip_address     String?      @db.VarChar(50)
+  mac_address    String?      @db.VarChar(20)
+  firmware_version String?    @db.VarChar(50)
+  auth_token     String?      @db.VarChar(255)
+  settings       Json?
+  status         DeviceStatus @default(UNREGISTERED)
+  last_heartbeat DateTime?
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+
+  company  Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch   Branch     @relation(fields: [branch_id], references: [id])
+  counter  Counter?   @relation(fields: [counter_id], references: [id])
+  health_logs DeviceHealthLog[]
+  qr_scans    QrScan[]
+  display_ads BranchAdvertisement[]
+
+  @@index([company_id])
+  @@index([branch_id])
+  @@map("devices")
+}
+
+model DeviceHealthLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  device_id      String   @db.Uuid
+  cpu_usage      Float?
+  memory_usage   Float?
+  disk_usage     Float?
+  temperature    Float?
+  uptime_seconds Int?
+  network_latency_ms Int?
+  created_at     DateTime @default(now())
+
+  device Device @relation(fields: [device_id], references: [id], onDelete: Cascade)
+
+  @@index([device_id])
+  @@map("device_health_logs")
+}
+
+model Advertisement {
+  id         String              @id @default(uuid()) @db.Uuid
+  company_id String              @db.Uuid
+  name       String              @db.VarChar(200)
+  media_id   String              @db.Uuid
+  duration_sec Int               @default(10)
+  url        String?             @db.VarChar(500)
+  start_date DateTime?
+  end_date   DateTime?
+  status     AdvertisementStatus @default(ACTIVE)
+  created_at DateTime            @default(now())
+  updated_at DateTime            @updatedAt
+
+  company  Company               @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  media    MediaFile             @relation("AdMedia", fields: [media_id], references: [id])
+  displays BranchAdvertisement[]
+
+  @@index([company_id])
+  @@map("advertisements")
+}
+
+model BranchAdvertisement {
+  id               String   @id @default(uuid()) @db.Uuid
+  branch_id        String   @db.Uuid
+  advertisement_id String   @db.Uuid
+  device_id        String?  @db.Uuid
+  sort_order       Int      @default(0)
+  created_at       DateTime @default(now())
+
+  branch        Branch        @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  advertisement Advertisement @relation(fields: [advertisement_id], references: [id], onDelete: Cascade)
+  device        Device?       @relation(fields: [device_id], references: [id])
+
+  @@unique([branch_id, advertisement_id])
+  @@index([branch_id])
+  @@map("branch_advertisements")
+}
+
+model NotificationTemplate {
+  id         String              @id @default(uuid()) @db.Uuid
+  company_id String              @db.Uuid
+  channel    NotificationChannel
+  name       String              @db.VarChar(120)
+  // Supports variables: {{queue_number}}, {{counter}}, {{wait_time}} etc.
+  title      String?             @db.VarChar(255)
+  body       String              @db.Text
+  is_active  Boolean             @default(true)
+  created_at DateTime            @default(now())
+  updated_at DateTime            @updatedAt
+
+  company       Company        @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@index([company_id])
+  @@map("notification_templates")
+}
+
+model Notification {
+  id          String             @id @default(uuid()) @db.Uuid
+  company_id  String             @db.Uuid
+  customer_id String?            @db.Uuid
+  template_id String?            @db.Uuid
+  channel     NotificationChannel
+  title       String?            @db.VarChar(255)
+  body        String             @db.Text
+  status      NotificationStatus @default(PENDING)
+  sent_at     DateTime?
+  read_at     DateTime?
+  metadata    Json?
+  created_at  DateTime           @default(now())
+
+  customer Customer?            @relation(fields: [customer_id], references: [id])
+  template NotificationTemplate? @relation(fields: [template_id], references: [id])
+
+  @@index([customer_id])
+  @@index([status])
+  @@map("notifications")
+}
+
+model Survey {
+  id          String   @id @default(uuid()) @db.Uuid
+  company_id  String   @db.Uuid
+  name        String   @db.VarChar(200)
+  description String?  @db.Text
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  company   Company        @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  questions SurveyQuestion[]
+  branches  BranchSurvey[]
+
+  @@index([company_id])
+  @@map("surveys")
+}
+
+model BranchSurvey {
+  branch_id String @db.Uuid
+  survey_id String @db.Uuid
+
+  branch Branch @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  survey Survey @relation(fields: [survey_id], references: [id], onDelete: Cascade)
+
+  @@id([branch_id, survey_id])
+  @@map("branch_surveys")
+}
+
+model SurveyQuestion {
+  id          String   @id @default(uuid()) @db.Uuid
+  survey_id   String   @db.Uuid
+  question    String   @db.Text
+  type        String   @db.VarChar(30) // "RATING" | "TEXT" | "SINGLE_CHOICE" | "MULTI_CHOICE"
+  options     Json?    // For choice-type questions
+  is_required Boolean  @default(false)
+  sort_order  Int      @default(0)
+
+  survey    Survey           @relation(fields: [survey_id], references: [id], onDelete: Cascade)
+  responses SurveyResponse[]
+
+  @@index([survey_id])
+  @@map("survey_questions")
+}
+
+model SurveyResponse {
+  id          String   @id @default(uuid()) @db.Uuid
+  question_id String   @db.Uuid
+  customer_id String?  @db.Uuid
+  ticket_id   String?  @db.Uuid
+  answer      Json
+  created_at  DateTime @default(now())
+
+  question SurveyQuestion @relation(fields: [question_id], references: [id])
+  customer Customer?      @relation(fields: [customer_id], references: [id])
+
+  @@index([question_id])
+  @@map("survey_responses")
+}
+
+model AnalyticsSnapshot {
+  id                   String   @id @default(uuid()) @db.Uuid
+  company_id           String   @db.Uuid
+  branch_id            String?  @db.Uuid
+  snapshot_date        DateTime @db.Date
+  total_tickets        Int      @default(0)
+  completed_tickets    Int      @default(0)
+  cancelled_tickets    Int      @default(0)
+  no_show_tickets      Int      @default(0)
+  online_tickets       Int      @default(0)
+  avg_wait_time_sec    Int?
+  avg_service_time_sec Int?
+  peak_hour            Int?     // 0–23
+  total_orders         Int      @default(0)
+  total_revenue        Decimal? @db.Decimal(14, 2)
+  created_at           DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  branch  Branch? @relation(fields: [branch_id], references: [id])
+
+  @@unique([company_id, branch_id, snapshot_date])
+  @@index([company_id])
+  @@map("analytics_snapshots")
+}
+
+model AuditLog {
+  id                    String      @id @default(uuid()) @db.Uuid
+  company_id            String?     @db.Uuid
+  // Polymorphic actor: only one of these two will be set
+  platform_user_id      String?     @db.Uuid
+  company_user_id       String?     @db.Uuid
+  actor_type            String?     @db.VarChar(30) // "platform_user" | "company_user" | "system"
+  action                AuditAction
+  entity_type           String?     @db.VarChar(80)
+  entity_id             String?     @db.Uuid
+  branch_id             String?     @db.Uuid
+  ip_address            String?     @db.VarChar(50)
+  user_agent            String?     @db.VarChar(500)
+  before_state          Json?
+  after_state           Json?
+  metadata              Json?
+  created_at            DateTime    @default(now())
+
+  company       Company?      @relation(fields: [company_id], references: [id])
+  platform_user PlatformUser? @relation("PlatformUserAuditLogs", fields: [platform_user_id], references: [id])
+  company_user  CompanyUser?  @relation("CompanyUserAuditLogs", fields: [company_user_id], references: [id])
+
+  @@index([company_id])
+  @@index([platform_user_id])
+  @@index([company_user_id])
+  @@index([entity_type, entity_id])
+  @@index([created_at])
+  @@map("audit_logs")
+}

@@ -38,7 +38,7 @@ app.use((_req, res) => {
 
 app.use(ErrorHandlerMiddleware.errorHandlerMiddleware);
 
-const PORT = parseInt(process.env.APP_PORT || "9000", 10);
+const PORT = parseInt(process.env.APP_PORT || process.env.PORT || "9000", 10);
 const server = http.createServer(app);
 
 // WebSocket for real-time queue updates

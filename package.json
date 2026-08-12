@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon",
+    "start": "ts-node -r tsconfig-paths/register src/index.ts",
     "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
     "migrate": "prisma migrate deploy && npm run seed"
   },

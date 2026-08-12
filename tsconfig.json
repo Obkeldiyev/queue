@@ -27,6 +27,9 @@
       "@utils": [
         "./src/utils"
       ],
+      "@prisma/*": [
+        "./src/prisma/*"
+      ]
     },
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,

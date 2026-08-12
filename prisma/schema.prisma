@@ -350,6 +350,7 @@ model Company {
   address          String?       @db.Text
   timezone         String        @default("Asia/Tashkent") @db.VarChar(60)
   locale           String        @default("uz") @db.VarChar(10)
+  settings         Json?         // Company-level visual/content settings (kiosk/display)
   status           CompanyStatus @default(TRIAL)
   created_at       DateTime      @default(now())
   updated_at       DateTime      @updatedAt
@@ -389,6 +390,7 @@ model CompanyUser {
   id            String     @id @default(uuid()) @db.Uuid
   company_id    String     @db.Uuid
   branch_id     String?    @db.Uuid
+  default_counter_id String? @db.Uuid
   first_name    String     @db.VarChar(80)
   last_name     String     @db.VarChar(80)
   email         String     @db.VarChar(200)
@@ -402,6 +404,8 @@ model CompanyUser {
 
   company  Company  @relation(fields: [company_id], references: [id], onDelete: Cascade)
   branch   Branch?  @relation(fields: [branch_id], references: [id])
+  // `default_counter_id` stores the admin-assigned counter UUID. Relation intentionally omitted
+  // to avoid adding a back-reference field on `Counter`.
   roles    CompanyUserRole[]
   counter_sessions CounterSession[]
   audit_logs       AuditLog[]         @relation("CompanyUserAuditLogs")
@@ -409,6 +413,7 @@ model CompanyUser {
   created_pages    PageVersion[]
 
   @@unique([company_id, email])
+  @@index([email])
   @@index([company_id])
   @@index([branch_id])
   @@map("company_users")
@@ -485,10 +490,14 @@ model RefreshToken {
 model Branch {
   id            String      @id @default(uuid()) @db.Uuid
   company_id    String      @db.Uuid
-  name          String      @db.VarChar(200)
+  name_uz       String      @db.VarChar(200)
+  name_ru       String?     @db.VarChar(200)
+  name_en       String?     @db.VarChar(200)
   phone         String?     @db.VarChar(30)
   email         String?     @db.VarChar(200)
-  address       String?     @db.Text
+  address_uz    String?     @db.Text
+  address_ru    String?     @db.Text
+  address_en    String?     @db.Text
   latitude      Decimal?    @db.Decimal(10, 8)
   longitude     Decimal?    @db.Decimal(11, 8)
   working_hours Json?       // { mon: {open:"09:00", close:"18:00"}, ... }
@@ -666,6 +675,7 @@ model Menu {
   icon_class     String?  @db.VarChar(80)  // e.g. "home-icon"
   url            String?  @db.VarChar(500)
   page_id        String?  @db.Uuid
+  queue_group_id String?  @db.Uuid
   target         String?  @db.VarChar(20)  // "_blank" | "_self"
   sort_order     Int      @default(0)
   is_visible     Boolean  @default(true)
@@ -677,6 +687,7 @@ model Menu {
   parent     Menu?      @relation("MenuChildren", fields: [parent_id], references: [id])
   children   Menu[]     @relation("MenuChildren")
   page       Page?      @relation(fields: [page_id], references: [id])
+  queue_group QueueGroup? @relation(fields: [queue_group_id], references: [id])
   icon_media MediaFile? @relation("MenuIcon", fields: [icon_media_id], references: [id])
 
   @@index([company_id])
@@ -687,8 +698,12 @@ model Menu {
 model Service {
   id                    String        @id @default(uuid()) @db.Uuid
   company_id            String        @db.Uuid
-  name                  String        @db.VarChar(200)
-  description           String?       @db.Text
+  name_uz               String        @db.VarChar(200)
+  name_ru               String?       @db.VarChar(200)
+  name_en               String?       @db.VarChar(200)
+  description_uz        String?       @db.Text
+  description_ru        String?       @db.Text
+  description_en        String?       @db.Text
   icon_media_id         String?       @db.Uuid
   color                 String?       @db.VarChar(10)
   estimated_time_mins   Int?
@@ -711,7 +726,9 @@ model QueueGroup {
   company_id            String    @db.Uuid
   branch_id             String    @db.Uuid
   service_id            String?   @db.Uuid
-  name                  String    @db.VarChar(200)
+  name_uz               String    @db.VarChar(200)
+  name_ru               String?   @db.VarChar(200)
+  name_en               String?   @db.VarChar(200)
   prefix                String    @db.VarChar(10)
   // Number format: "PREFIX-{NUM:4}" or "{BRANCH}-{PREFIX}-{NUM:3}"
   number_format         String    @default("{PREFIX}{NUM:3}") @db.VarChar(80)
@@ -736,6 +753,7 @@ model QueueGroup {
   counter_queues CounterQueue[]
   tickets       Ticket[]
   reservations  QueueReservation[]
+  menus         Menu[]
 
   @@index([company_id])
   @@index([branch_id])
@@ -746,7 +764,9 @@ model Counter {
   id          String   @id @default(uuid()) @db.Uuid
   company_id  String   @db.Uuid
   branch_id   String   @db.Uuid
-  name        String   @db.VarChar(100)
+  name_uz     String   @db.VarChar(100)
+  name_ru     String?  @db.VarChar(100)
+  name_en     String?  @db.VarChar(100)
   number      Int
   description String?  @db.VarChar(255)
   is_active   Boolean  @default(true)

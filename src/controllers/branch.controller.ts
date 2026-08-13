@@ -75,6 +75,7 @@ export class BranchController {
         include: {
           queue_groups: { include: { service: true } },
           counters: true, devices: true,
+          company: { include: { logo_media: true } },
           _count: { select: { tickets: true, orders: true } },
         },
       });

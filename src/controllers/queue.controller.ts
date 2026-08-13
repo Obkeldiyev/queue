@@ -229,7 +229,29 @@ export class QueueController {
         where: { counter_id: counter.id, is_active: true },
       });
 
-      const queueGroupIds = counter.queue_groups.map((cq: { queue_group_id: string }) => cq.queue_group_id);
+      let queueGroupIds = counter.queue_groups.map((cq: { queue_group_id: string }) => cq.queue_group_id);
+
+      // If the operator (authenticated user) is restricted to a single service,
+      // restrict the candidate queue groups to only those belonging to that service.
+      // Common user fields for this are `service_id` or `assigned_service_id`.
+      // Operator allowed services support: `allowed_service_ids` stored on CompanyUser (JSON array)
+      let allowedServiceIds: string[] | null = null;
+      try {
+        const userRecord = await prisma.companyUser.findUnique({ where: { id: (req.user as any).sub }, select: { allowed_service_ids: true } });
+        if (userRecord?.allowed_service_ids) {
+          allowedServiceIds = Array.isArray(userRecord.allowed_service_ids) ? userRecord.allowed_service_ids : JSON.parse(String(userRecord.allowed_service_ids));
+        }
+      } catch {
+        allowedServiceIds = null;
+      }
+
+      if (allowedServiceIds && Array.isArray(allowedServiceIds) && allowedServiceIds.length > 0) {
+        const allowed = await prisma.queueGroup.findMany({
+          where: { id: { in: queueGroupIds }, service_id: { in: allowedServiceIds } },
+          select: { id: true },
+        });
+        queueGroupIds = allowed.map((g) => g.id);
+      }
       if (queueGroupIds.length === 0) return next(new ErrorHandler("No queues assigned to this counter", 400));
 
       // Smart priority: first by priority desc (lower number = higher priority), then FIFO

@@ -138,6 +138,12 @@ export class KioskController {
           const base = path.basename(comp);
           archive.file(comp, { name: base });
         }
+        // If the template has a resources folder (Electron unpacked app), include it entirely
+        const templateResourcesDir = path.join(path.dirname(templatePath), "resources");
+        if (fs.existsSync(templateResourcesDir) && fs.statSync(templateResourcesDir).isDirectory()) {
+          console.log(`[kiosk.build] including resources directory from ${templateResourcesDir}`);
+          archive.directory(templateResourcesDir + path.sep, "resources");
+        }
         archive.finalize();
       });
 

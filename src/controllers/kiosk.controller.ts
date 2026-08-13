@@ -88,6 +88,23 @@ export class KioskController {
         return res.status(500).json({ success: false, message: "Failed to prepare EXE for packaging." });
       }
 
+      // Copy any companion runtime files (e.g. icudtl.dat) from the template directory
+      const templateDir = path.dirname(templatePath);
+      const companionFiles = ["icudtl.dat"];
+      const copiedCompanions: string[] = [];
+      for (const fname of companionFiles) {
+        const src = path.join(templateDir, fname);
+        if (fs.existsSync(src)) {
+          const dest = path.join(tmpDir, fname);
+          try {
+            fs.copyFileSync(src, dest);
+            copiedCompanions.push(dest);
+          } catch (e) {
+            console.warn(`[kiosk.build] failed to copy companion ${fname}:`, e);
+          }
+        }
+      }
+
       const config = {
         kioskUrl: kioskUrl || "",
         apiUrl: apiUrl || "",
@@ -116,6 +133,11 @@ export class KioskController {
         archive.pipe(output);
         archive.file(exeDest, { name: exeName });
         archive.file(configPath, { name: "kiosk-config.json" });
+        // include any copied companion files
+        for (const comp of copiedCompanions) {
+          const base = path.basename(comp);
+          archive.file(comp, { name: base });
+        }
         archive.finalize();
       });
 
@@ -130,7 +152,11 @@ export class KioskController {
           fs.unlinkSync(zipPath);
           fs.unlinkSync(exeDest);
           fs.unlinkSync(configPath);
-          fs.rmdirSync(tmpDir);
+          // remove copied companion files
+          for (const comp of copiedCompanions) {
+            try { fs.unlinkSync(comp); } catch { /* ignore */ }
+          }
+          try { fs.rmdirSync(tmpDir); } catch { /* ignore */ }
         } catch { /* ignore cleanup errors */ }
         if (err) {
           console.error("Failed to send kiosk zip:", err);

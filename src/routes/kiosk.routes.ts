@@ -16,7 +16,7 @@ router.get("/build", (req, res, next) => {
 
 // GET /template - download the raw EXE template (useful for testing)
 router.get("/template", (req, res) => {
-	const templatePath = process.env.KIOSK_TEMPLATE_PATH || path.join(process.cwd(), "templates", "Qubit QMS Kiosk.exe");
+	const templatePath = process.env.KIOSK_TEMPLATE_PATH || path.join(process.cwd(), "templates", "win-unpacked", "Qubit QMS Kiosk.exe");
 	if (!fs.existsSync(templatePath)) {
 		return res.status(404).json({ success: false, message: `Template not found at ${templatePath}` });
 	}

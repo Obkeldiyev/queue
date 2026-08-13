@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "nodemon",
     "start": "ts-node -r tsconfig-paths/register src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start:prod": "node dist/index.js",
     "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
     "migrate": "prisma migrate deploy && npm run seed"
   },
@@ -14,6 +16,7 @@
   "license": "ISC",
   "devDependencies": {
     "@types/express": "^4.17.21",
+    "@types/archiver": "^5.3.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
     "nodemon": "^3.1.4",

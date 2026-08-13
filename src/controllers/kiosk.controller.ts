@@ -73,7 +73,9 @@ export class KioskController {
         }
       }
 
+      console.log(`[kiosk.build] templatePath=${templatePath} buildOnServer=${buildOnServer}`);
       if (!fs.existsSync(templatePath)) {
+        console.error(`[kiosk.build] template not found: ${templatePath}`);
         return res.status(503).json({ success: false, message: `Kiosk template not found at ${templatePath}. Place the built EXE there or set KIOSK_TEMPLATE_PATH.` });
       }
 
@@ -81,6 +83,10 @@ export class KioskController {
       const exeName = path.basename(templatePath);
       const exeDest = path.join(tmpDir, exeName);
       fs.copyFileSync(templatePath, exeDest);
+      if (!fs.existsSync(exeDest)) {
+        console.error(`[kiosk.build] copied exe not found at ${exeDest}`);
+        return res.status(500).json({ success: false, message: "Failed to prepare EXE for packaging." });
+      }
 
       const config = {
         kioskUrl: kioskUrl || "",
@@ -98,6 +104,7 @@ export class KioskController {
       const zipPath = path.join(os.tmpdir(), zipName);
 
       if (!archiver) {
+        console.error('[kiosk.build] missing archiver dependency');
         return res.status(503).json({ success: false, message: 'Server missing dependency "archiver". Run `npm install` in starter.' });
       }
 
@@ -112,7 +119,13 @@ export class KioskController {
         archive.finalize();
       });
 
-      res.download(zipPath, zipName, (err) => {
+      const zipStat = fs.statSync(zipPath);
+      console.log(`[kiosk.build] created zip ${zipPath} size=${zipStat.size}`);
+
+      // force correct headers and stream file
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
+      res.sendFile(zipPath, (err) => {
         try {
           fs.unlinkSync(zipPath);
           fs.unlinkSync(exeDest);

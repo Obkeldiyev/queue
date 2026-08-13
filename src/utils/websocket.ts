@@ -34,7 +34,18 @@ export function initWebSocket(server: Server): WebSocketServer {
     (ws as WebSocket & { branchId?: string; companyId?: string }).branchId = branchId ?? undefined;
     (ws as WebSocket & { branchId?: string; companyId?: string }).companyId = companyId ?? undefined;
 
-    ws.on("error", console.error);
+    // Send a ping every 30s to keep the connection alive through nginx/load-balancers.
+    // The client does not need to handle pings — the ws library handles pong automatically.
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping();
+      } else {
+        clearInterval(pingInterval);
+      }
+    }, 30_000);
+
+    ws.on("close", () => clearInterval(pingInterval));
+    ws.on("error", (err) => { console.error("[ws] client error", err); clearInterval(pingInterval); });
     ws.send(JSON.stringify({ event: "connected", payload: { branchId, companyId } }));
   });
 

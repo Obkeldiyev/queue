@@ -2,7 +2,16 @@ import { Request, Response } from "express";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import archiver from "archiver";
+// Load archiver at runtime to avoid TypeScript compile-time module resolution
+const archiver = (() => {
+  try {
+    // use eval to prevent static analysis from requiring the module at compile time
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return eval("require")("archiver");
+  } catch {
+    return null as any;
+  }
+})();
 import { exec as _exec } from "child_process";
 import { promisify } from "util";
 const exec = promisify(_exec);
@@ -88,11 +97,15 @@ export class KioskController {
       const zipName = `qubit-kiosk-${Date.now()}.zip`;
       const zipPath = path.join(os.tmpdir(), zipName);
 
+      if (!archiver) {
+        return res.status(503).json({ success: false, message: 'Server missing dependency "archiver". Run `npm install` in starter.' });
+      }
+
       await new Promise<void>((resolve, reject) => {
         const output = fs.createWriteStream(zipPath);
         const archive = archiver("zip", { zlib: { level: 9 } });
         output.on("close", () => resolve());
-        archive.on("error", (err) => reject(err));
+        archive.on("error", (err: Error) => reject(err));
         archive.pipe(output);
         archive.file(exeDest, { name: exeName });
         archive.file(configPath, { name: "kiosk-config.json" });

@@ -5,7 +5,7 @@ import { authenticate, requireCompanyAdmin, requireCompanyUser } from "../middle
 const router = Router();
 
 // Ticket operations (kiosk + operator)
-router.get("/tickets/list", authenticate, requireCompanyUser, QueueController.listTickets);
+router.get("/tickets/list", QueueController.listTickets);             // Public: kiosk reads waiting counts
 router.post("/tickets/issue", QueueController.issueTicket);           // Public: kiosk / online
 router.post("/tickets/call-next", authenticate, requireCompanyUser, QueueController.callNext);
 router.post('/tickets/:id/assign', authenticate, requireCompanyAdmin, QueueController.assignTicket);
@@ -17,8 +17,8 @@ router.patch("/tickets/:id/no-show", authenticate, requireCompanyUser, QueueCont
 router.patch("/tickets/:id/cancel", QueueController.cancelTicket);    // Customer can cancel own
 router.patch("/tickets/:id/transfer", authenticate, requireCompanyUser, QueueController.transferTicket);
 
-// Queue Groups (admin)
-router.get("/", authenticate, requireCompanyAdmin, QueueController.listGroups);
+// Queue Groups
+router.get("/", QueueController.listGroups);                          // Public: kiosk reads active queues
 router.post("/", authenticate, requireCompanyAdmin, QueueController.createGroup);
 router.get("/:id", authenticate, requireCompanyAdmin, QueueController.findOneGroup);
 router.patch("/:id", authenticate, requireCompanyAdmin, QueueController.updateGroup);

@@ -247,7 +247,7 @@ export class AuthController {
             roles: u.roles.map((r: { company_role: { name: string; type: string } }) => r.company_role.name),
             roleTypes: u.roles.map((r: { company_role: { name: string; type: string } }) => r.company_role.type),
             type: "company_user",
-            allowed_service_ids: u.allowed_service_ids ?? null,
+            allowed_service_ids: (u as any).allowed_service_ids ?? null,
             company: u.company ? { id: u.company.id, name: u.company.name, slug: u.company.slug } : undefined,
           },
         });

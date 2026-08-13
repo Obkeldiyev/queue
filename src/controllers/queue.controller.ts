@@ -237,9 +237,10 @@ export class QueueController {
       // Operator allowed services support: `allowed_service_ids` stored on CompanyUser (JSON array)
       let allowedServiceIds: string[] | null = null;
       try {
-        const userRecord = await prisma.companyUser.findUnique({ where: { id: (req.user as any).sub }, select: { allowed_service_ids: true } });
-        if (userRecord?.allowed_service_ids) {
-          allowedServiceIds = Array.isArray(userRecord.allowed_service_ids) ? userRecord.allowed_service_ids : JSON.parse(String(userRecord.allowed_service_ids));
+        const userRecord = await prisma.companyUser.findUnique({ where: { id: (req.user as any).sub } });
+        const raw = (userRecord as any)?.allowed_service_ids;
+        if (raw) {
+          allowedServiceIds = Array.isArray(raw) ? raw : JSON.parse(String(raw));
         }
       } catch {
         allowedServiceIds = null;

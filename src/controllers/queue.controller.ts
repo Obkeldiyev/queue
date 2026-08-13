@@ -234,21 +234,10 @@ export class QueueController {
       // If the operator (authenticated user) is restricted to a single service,
       // restrict the candidate queue groups to only those belonging to that service.
       // Common user fields for this are `service_id` or `assigned_service_id`.
-      // Operator allowed services support: `allowed_service_ids` stored on CompanyUser (JSON array)
-      let allowedServiceIds: string[] | null = null;
-      try {
-        const userRecord = await prisma.companyUser.findUnique({ where: { id: (req.user as any).sub } });
-        const raw = (userRecord as any)?.allowed_service_ids;
-        if (raw) {
-          allowedServiceIds = Array.isArray(raw) ? raw : JSON.parse(String(raw));
-        }
-      } catch {
-        allowedServiceIds = null;
-      }
-
-      if (allowedServiceIds && Array.isArray(allowedServiceIds) && allowedServiceIds.length > 0) {
+      const operatorServiceId = (req.user as any)?.service_id || (req.user as any)?.assigned_service_id;
+      if (operatorServiceId) {
         const allowed = await prisma.queueGroup.findMany({
-          where: { id: { in: queueGroupIds }, service_id: { in: allowedServiceIds } },
+          where: { id: { in: queueGroupIds }, service_id: operatorServiceId },
           select: { id: true },
         });
         queueGroupIds = allowed.map((g) => g.id);

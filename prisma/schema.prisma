@@ -395,7 +395,6 @@ model CompanyUser {
   last_name     String     @db.VarChar(80)
   email         String     @db.VarChar(200)
   phone         String?    @db.VarChar(30)
-  allowed_service_ids Json?
   password_hash String     @db.VarChar(255)
   avatar_url    String?    @db.VarChar(500)
   status        UserStatus @default(ACTIVE)

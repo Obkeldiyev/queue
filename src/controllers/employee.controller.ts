@@ -9,10 +9,10 @@ import type { AuthRequest } from "@middlewares";
 const USER_SELECT = {
   id: true, first_name: true, last_name: true, email: true, phone: true,
   status: true, branch_id: true, company_id: true, default_counter_id: true,
-  allowed_service_ids: true, last_login_at: true, created_at: true,
+  last_login_at: true, created_at: true,
   roles: { include: { company_role: { select: { id: true, name: true, type: true } } } },
   branch: { select: { id: true, name_uz: true, name_ru: true, name_en: true } },
-};
+} as const;
 
 export class EmployeeController {
   // GET /employees
@@ -27,7 +27,7 @@ export class EmployeeController {
       const users = await prisma.companyUser.findMany({
         where,
         orderBy: { created_at: "asc" },
-        select: USER_SELECT,
+        select: { ...USER_SELECT, allowed_service_ids: true } as any,
       });
       res.json({ success: true, data: users });
     } catch (e) { next(e); }
@@ -91,7 +91,7 @@ export class EmployeeController {
     try {
       const user = await prisma.companyUser.findUnique({
         where: { id: req.params.id },
-        select: USER_SELECT,
+        select: { ...USER_SELECT, allowed_service_ids: true } as any,
       });
       if (!user) return next(new ErrorHandler("Employee not found", 404));
       res.json({ success: true, data: user });
@@ -121,7 +121,7 @@ export class EmployeeController {
             ? { password_hash: hashPassword((body as any).password) }
             : {}),
         } as any,
-        select: { id: true, first_name: true, last_name: true, email: true, status: true, allowed_service_ids: true },
+        select: { id: true, first_name: true, last_name: true, email: true, status: true } as any,
       });
       res.json({ success: true, data: user });
     } catch (e) { next(e); }

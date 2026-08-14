@@ -104,7 +104,6 @@ export class AuthController {
           include: { roles: { include: { company_role: true } } },
         });
       }
-
       if (!companyUser || !(await verifyPassword(password, companyUser.password_hash))) {
         return next(new ErrorHandler("Invalid credentials", 401));
       }
@@ -114,6 +113,7 @@ export class AuthController {
 
       const roles = companyUser.roles.map((r: { company_role: { name: string; type: string } }) => r.company_role.name);
       const roleTypes = companyUser.roles.map((r: { company_role: { name: string; type: string } }) => r.company_role.type);
+      const allowedServiceIds = (companyUser as any).allowed_service_ids ?? null;
       const payload = {
         sub: companyUser.id,
         type: "company_user" as const,
@@ -150,6 +150,7 @@ export class AuthController {
             company_id: companyUser.company_id,
             branch_id: companyUser.branch_id,
             default_counter_id: companyUser.default_counter_id,
+            allowed_service_ids: allowedServiceIds,
             roles,
             roleTypes,
             type: "company_user",
@@ -244,6 +245,7 @@ export class AuthController {
             id: u.id, email: u.email, first_name: u.first_name, last_name: u.last_name,
             company_id: u.company_id, branch_id: u.branch_id,
             default_counter_id: u.default_counter_id,
+            allowed_service_ids: (u as any).allowed_service_ids ?? null,
             roles: u.roles.map((r: { company_role: { name: string; type: string } }) => r.company_role.name),
             roleTypes: u.roles.map((r: { company_role: { name: string; type: string } }) => r.company_role.type),
             type: "company_user",

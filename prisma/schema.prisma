@@ -398,6 +398,9 @@ model CompanyUser {
   password_hash String     @db.VarChar(255)
   avatar_url    String?    @db.VarChar(500)
   status        UserStatus @default(ACTIVE)
+  // JSON array of service UUIDs this operator is allowed to handle.
+  // null = no restriction (can serve all services on their counter)
+  allowed_service_ids Json?
   last_login_at DateTime?
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt

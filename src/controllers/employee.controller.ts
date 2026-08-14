@@ -8,7 +8,8 @@ import type { AuthRequest } from "@middlewares";
 
 const USER_SELECT = {
   id: true, first_name: true, last_name: true, email: true, phone: true,
-  status: true, branch_id: true, company_id: true, default_counter_id: true, last_login_at: true, created_at: true,
+  status: true, branch_id: true, company_id: true, default_counter_id: true,
+  allowed_service_ids: true, last_login_at: true, created_at: true,
   roles: { include: { company_role: { select: { id: true, name: true, type: true } } } },
   branch: { select: { id: true, name_uz: true, name_ru: true, name_en: true } },
 };
@@ -112,12 +113,15 @@ export class EmployeeController {
           ...(Object.prototype.hasOwnProperty.call(body, 'default_counter_id')
             ? { default_counter_id: (body as any).default_counter_id }
             : {}),
+          ...(Object.prototype.hasOwnProperty.call(body, 'allowed_service_ids')
+            ? { allowed_service_ids: (body as any).allowed_service_ids }
+            : {}),
           // Allow admin to reset password
           ...((body as any).password
             ? { password_hash: hashPassword((body as any).password) }
             : {}),
         } as any,
-        select: { id: true, first_name: true, last_name: true, email: true, status: true },
+        select: { id: true, first_name: true, last_name: true, email: true, status: true, allowed_service_ids: true },
       });
       res.json({ success: true, data: user });
     } catch (e) { next(e); }

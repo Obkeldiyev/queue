@@ -5,6 +5,7 @@ import type { CreateMenuDto, UpdateMenuDto, ReorderMenuDto } from "../dto/menu.d
 import type { AuthRequest } from "@middlewares";
 
 export class MenuController {
+
   // GET /menus
   static async list(req: AuthRequest, res: Response, next: NextFunction) {
     try {
@@ -30,9 +31,9 @@ export class MenuController {
       });
 
       // Fetch multilingual name columns via raw SQL and merge into results
-      const allIds = menus.flatMap((m) => [
+      const allIds = menus.flatMap((m: any) => [
         m.id,
-        ...((m as any).children ?? []).flatMap((c: any) => [c.id, ...((c.children ?? []).map((cc: any) => cc.id))]),
+        ...(m.children ?? []).flatMap((c: any) => [c.id, ...(c.children ?? []).map((cc: any) => cc.id)]),
       ]);
       let nameMap: Record<string, { name_uz: string | null; name_ru: string | null; name_en: string | null }> = {};
       if (allIds.length > 0) {
@@ -59,12 +60,16 @@ export class MenuController {
       const companyId = req.user?.type === "company_user" ? req.user.companyId : (body.company_id ?? undefined);
       if (!companyId) return next(new ErrorHandler("company_id required", 400));
 
+      const nameUz = (body as any).name_uz as string | undefined;
+      const nameRu = (body as any).name_ru as string | undefined;
+      const nameEn = (body as any).name_en as string | undefined;
+
       const menu = await prisma.menu.create({
         data: {
           company_id: companyId,
           parent_id: body.parent_id ?? null,
-          name: (body as any).name_uz ?? body.name,
-          label: body.label ?? (body as any).name_uz ?? body.name,
+          name: nameUz ?? body.name,
+          label: body.label ?? nameUz ?? body.name,
           icon_class: body.icon_class ?? null,
           url: body.url ?? null,
           page_id: body.page_id ?? null,
@@ -79,10 +84,7 @@ export class MenuController {
         },
       });
 
-      // Patch multilingual columns via raw SQL until prisma generate catches up
-      const nameUz = (body as any).name_uz;
-      const nameRu = (body as any).name_ru;
-      const nameEn = (body as any).name_en;
+      // Patch multilingual columns via raw SQL (Prisma client not yet regenerated for new columns)
       if (nameUz || nameRu || nameEn) {
         const sets: string[] = [];
         const values: unknown[] = [];
@@ -95,11 +97,8 @@ export class MenuController {
           ...values
         );
       }
-        include: {
-          queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
-        },
-      });
-      res.status(201).json({ success: true, data: menu });
+
+      res.status(201).json({ success: true, data: { ...menu, name_uz: nameUz ?? null, name_ru: nameRu ?? null, name_en: nameEn ?? null } });
     } catch (e) { next(e); }
   }
 
@@ -107,17 +106,17 @@ export class MenuController {
   static async update(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const body = req.body as UpdateMenuDto;
-      const nameUz = (body as any).name_uz;
-      const nameRu = (body as any).name_ru;
-      const nameEn = (body as any).name_en;
+      const nameUz = (body as any).name_uz as string | undefined;
+      const nameRu = (body as any).name_ru as string | undefined;
+      const nameEn = (body as any).name_en as string | undefined;
 
-      // First update known Prisma fields (without the new columns)
+      // Update known Prisma fields
       await prisma.menu.update({
         where: { id: req.params.id },
         data: {
-          ...(body.parent_id !== undefined && { parent_id: body.parent_id }),
-          ...(body.name !== undefined ? { name: body.name } : nameUz !== undefined ? { name: nameUz } : {}),
+          ...(nameUz !== undefined ? { name: nameUz } : body.name !== undefined ? { name: body.name } : {}),
           ...(body.label !== undefined && { label: body.label }),
+          ...(body.parent_id !== undefined && { parent_id: body.parent_id }),
           ...(body.icon_class !== undefined && { icon_class: body.icon_class }),
           ...(body.url !== undefined && { url: body.url }),
           ...(body.page_id !== undefined && { page_id: body.page_id }),
@@ -129,7 +128,7 @@ export class MenuController {
         },
       });
 
-      // Then patch the multilingual columns via raw SQL (safe until prisma generate catches up)
+      // Patch multilingual columns via raw SQL
       const sets: string[] = [];
       const values: unknown[] = [];
       if (nameUz !== undefined) { sets.push(`name_uz = $${sets.length + 1}`); values.push(nameUz); }
@@ -143,14 +142,21 @@ export class MenuController {
         );
       }
 
-      // Fetch the final record to return
+      // Return the final record with multilingual fields merged
       const menu = await prisma.menu.findUnique({
         where: { id: req.params.id },
         include: {
           queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
         },
       });
-      res.json({ success: true, data: menu });
+
+      // Fetch updated multilingual fields
+      const [raw] = await prisma.$queryRawUnsafe<Array<{ name_uz: string | null; name_ru: string | null; name_en: string | null }>>(
+        `SELECT name_uz, name_ru, name_en FROM menus WHERE id = $1::uuid`,
+        req.params.id
+      );
+
+      res.json({ success: true, data: { ...menu, ...raw } });
     } catch (e) { next(e); }
   }
 
@@ -175,7 +181,3 @@ export class MenuController {
     } catch (e) { next(e); }
   }
 }
-
-
-
-

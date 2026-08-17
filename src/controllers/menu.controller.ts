@@ -27,7 +27,7 @@ export class MenuController {
             },
           },
         },
-      });
+      } as any);
       res.json({ success: true, data: menus });
     } catch (e) { next(e); }
   }
@@ -43,8 +43,11 @@ export class MenuController {
         data: {
           company_id: companyId,
           parent_id: body.parent_id ?? null,
-          name: body.name,
-          label: body.label ?? body.name,
+          name: (body as any).name_uz ?? body.name,
+          name_uz: (body as any).name_uz ?? body.name ?? null,
+          name_ru: (body as any).name_ru ?? null,
+          name_en: (body as any).name_en ?? null,
+          label: body.label ?? (body as any).name_uz ?? body.name,
           icon_class: body.icon_class ?? null,
           url: body.url ?? null,
           page_id: body.page_id ?? null,
@@ -53,7 +56,7 @@ export class MenuController {
           sort_order: body.sort_order ?? 0,
           is_visible: body.is_visible ?? true,
           requires_auth: body.requires_auth ?? false,
-        },
+        } as any,
         include: {
           queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
         },
@@ -66,11 +69,17 @@ export class MenuController {
   static async update(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const body = req.body as UpdateMenuDto;
+      const nameUz = (body as any).name_uz;
+      const nameRu = (body as any).name_ru;
+      const nameEn = (body as any).name_en;
       const menu = await prisma.menu.update({
         where: { id: req.params.id },
         data: {
           ...(body.parent_id !== undefined && { parent_id: body.parent_id }),
-          ...(body.name !== undefined && { name: body.name }),
+          // name stays in sync with name_uz as the primary canonical value
+          ...(nameUz !== undefined ? { name: nameUz, name_uz: nameUz } : body.name !== undefined ? { name: body.name } : {}),
+          ...(nameRu !== undefined && { name_ru: nameRu }),
+          ...(nameEn !== undefined && { name_en: nameEn }),
           ...(body.label !== undefined && { label: body.label }),
           ...(body.icon_class !== undefined && { icon_class: body.icon_class }),
           ...(body.url !== undefined && { url: body.url }),
@@ -80,7 +89,7 @@ export class MenuController {
           ...(body.sort_order !== undefined && { sort_order: body.sort_order }),
           ...(body.is_visible !== undefined && { is_visible: body.is_visible }),
           ...(body.requires_auth !== undefined && { requires_auth: body.requires_auth }),
-        },
+        } as any,
         include: {
           queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
         },

@@ -137,7 +137,24 @@ export class QueueController {
     try {
       const existing = await prisma.queueGroup.findUnique({ where: { id: req.params.id } });
       if (!existing) return next(new ErrorHandler("Queue group not found", 404));
+
+      // Delete in dependency order to avoid FK violations
+      // 1. Ticket history rows (references tickets)
+      await prisma.ticketHistory.deleteMany({
+        where: { ticket: { queue_group_id: req.params.id } },
+      });
+      // 2. Tickets themselves
+      await prisma.ticket.deleteMany({ where: { queue_group_id: req.params.id } });
+      // 3. Counter ↔ queue-group assignments
+      await prisma.counterQueue.deleteMany({ where: { queue_group_id: req.params.id } });
+      // 4. Menu items that link to this queue group (set to null, keep the menu item)
+      await prisma.menu.updateMany({
+        where: { queue_group_id: req.params.id },
+        data: { queue_group_id: null },
+      });
+      // 5. Finally delete the queue group
       await prisma.queueGroup.delete({ where: { id: req.params.id } });
+
       res.json({ success: true, message: "Queue group deleted" });
     } catch (e) { next(e); }
   }

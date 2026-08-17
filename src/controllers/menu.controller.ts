@@ -27,8 +27,28 @@ export class MenuController {
             },
           },
         },
-      } as any);
-      res.json({ success: true, data: menus });
+      });
+
+      // Fetch multilingual name columns via raw SQL and merge into results
+      const allIds = menus.flatMap((m) => [
+        m.id,
+        ...((m as any).children ?? []).flatMap((c: any) => [c.id, ...((c.children ?? []).map((cc: any) => cc.id))]),
+      ]);
+      let nameMap: Record<string, { name_uz: string | null; name_ru: string | null; name_en: string | null }> = {};
+      if (allIds.length > 0) {
+        const rows = await prisma.$queryRawUnsafe<Array<{ id: string; name_uz: string | null; name_ru: string | null; name_en: string | null }>>(
+          `SELECT id, name_uz, name_ru, name_en FROM menus WHERE id = ANY($1::uuid[])`,
+          allIds
+        );
+        for (const r of rows) nameMap[r.id] = { name_uz: r.name_uz, name_ru: r.name_ru, name_en: r.name_en };
+      }
+      const merge = (item: any): any => ({
+        ...item,
+        ...nameMap[item.id],
+        children: (item.children ?? []).map(merge),
+      });
+
+      res.json({ success: true, data: menus.map(merge) });
     } catch (e) { next(e); }
   }
 
@@ -44,9 +64,6 @@ export class MenuController {
           company_id: companyId,
           parent_id: body.parent_id ?? null,
           name: (body as any).name_uz ?? body.name,
-          name_uz: (body as any).name_uz ?? body.name ?? null,
-          name_ru: (body as any).name_ru ?? null,
-          name_en: (body as any).name_en ?? null,
           label: body.label ?? (body as any).name_uz ?? body.name,
           icon_class: body.icon_class ?? null,
           url: body.url ?? null,
@@ -56,7 +73,28 @@ export class MenuController {
           sort_order: body.sort_order ?? 0,
           is_visible: body.is_visible ?? true,
           requires_auth: body.requires_auth ?? false,
-        } as any,
+        },
+        include: {
+          queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
+        },
+      });
+
+      // Patch multilingual columns via raw SQL until prisma generate catches up
+      const nameUz = (body as any).name_uz;
+      const nameRu = (body as any).name_ru;
+      const nameEn = (body as any).name_en;
+      if (nameUz || nameRu || nameEn) {
+        const sets: string[] = [];
+        const values: unknown[] = [];
+        if (nameUz) { sets.push(`name_uz = $${sets.length + 1}`); values.push(nameUz); }
+        if (nameRu) { sets.push(`name_ru = $${sets.length + 1}`); values.push(nameRu); }
+        if (nameEn) { sets.push(`name_en = $${sets.length + 1}`); values.push(nameEn); }
+        values.push(menu.id);
+        await prisma.$executeRawUnsafe(
+          `UPDATE menus SET ${sets.join(", ")} WHERE id = $${values.length}::uuid`,
+          ...values
+        );
+      }
         include: {
           queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
         },
@@ -72,14 +110,13 @@ export class MenuController {
       const nameUz = (body as any).name_uz;
       const nameRu = (body as any).name_ru;
       const nameEn = (body as any).name_en;
-      const menu = await prisma.menu.update({
+
+      // First update known Prisma fields (without the new columns)
+      await prisma.menu.update({
         where: { id: req.params.id },
         data: {
           ...(body.parent_id !== undefined && { parent_id: body.parent_id }),
-          // name stays in sync with name_uz as the primary canonical value
-          ...(nameUz !== undefined ? { name: nameUz, name_uz: nameUz } : body.name !== undefined ? { name: body.name } : {}),
-          ...(nameRu !== undefined && { name_ru: nameRu }),
-          ...(nameEn !== undefined && { name_en: nameEn }),
+          ...(body.name !== undefined ? { name: body.name } : nameUz !== undefined ? { name: nameUz } : {}),
           ...(body.label !== undefined && { label: body.label }),
           ...(body.icon_class !== undefined && { icon_class: body.icon_class }),
           ...(body.url !== undefined && { url: body.url }),
@@ -89,7 +126,26 @@ export class MenuController {
           ...(body.sort_order !== undefined && { sort_order: body.sort_order }),
           ...(body.is_visible !== undefined && { is_visible: body.is_visible }),
           ...(body.requires_auth !== undefined && { requires_auth: body.requires_auth }),
-        } as any,
+        },
+      });
+
+      // Then patch the multilingual columns via raw SQL (safe until prisma generate catches up)
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      if (nameUz !== undefined) { sets.push(`name_uz = $${sets.length + 1}`); values.push(nameUz); }
+      if (nameRu !== undefined) { sets.push(`name_ru = $${sets.length + 1}`); values.push(nameRu); }
+      if (nameEn !== undefined) { sets.push(`name_en = $${sets.length + 1}`); values.push(nameEn); }
+      if (sets.length > 0) {
+        values.push(req.params.id);
+        await prisma.$executeRawUnsafe(
+          `UPDATE menus SET ${sets.join(", ")} WHERE id = $${values.length}::uuid`,
+          ...values
+        );
+      }
+
+      // Fetch the final record to return
+      const menu = await prisma.menu.findUnique({
+        where: { id: req.params.id },
         include: {
           queue_group: { select: { id: true, name_uz: true, name_ru: true, name_en: true, prefix: true } },
         },

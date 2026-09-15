@@ -13,6 +13,64 @@ import type {
 } from "../dto/queue.dto";
 import type { AuthRequest } from "@middlewares";
 
+
+function jsonStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === "string");
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+async function allowedQueueIdsForOperator(userId: string, companyId: string, branchId?: string): Promise<string[] | null> {
+  const operator = await prisma.companyUser.findUnique({
+    where: { id: userId },
+    select: { allowed_service_ids: true, allowed_menu_ids: true } as any,
+  });
+  const allowedServicesOrQueues = jsonStringArray((operator as any)?.allowed_service_ids);
+  const allowedMenuIds = jsonStringArray((operator as any)?.allowed_menu_ids);
+  if (!allowedServicesOrQueues.length && !allowedMenuIds.length) return null;
+
+  const menuQueueIds = new Set<string>();
+  if (allowedMenuIds.length) {
+    const menus = await prisma.menu.findMany({
+      where: { company_id: companyId },
+      select: { id: true, parent_id: true, queue_group_id: true },
+    });
+    const children = new Map<string, typeof menus[number][]>();
+    for (const menu of menus) {
+      if (!menu.parent_id) continue;
+      const list = children.get(menu.parent_id) || [];
+      list.push(menu);
+      children.set(menu.parent_id, list);
+    }
+    const visit = (menuId: string) => {
+      const menu = menus.find((m) => m.id === menuId);
+      if (menu?.queue_group_id) menuQueueIds.add(menu.queue_group_id);
+      for (const child of children.get(menuId) || []) visit(child.id);
+    };
+    for (const menuId of allowedMenuIds) visit(menuId);
+  }
+
+  const groups = await prisma.queueGroup.findMany({
+    where: {
+      company_id: companyId,
+      ...(branchId ? { branch_id: branchId } : {}),
+      OR: [
+        ...(allowedServicesOrQueues.length ? [{ id: { in: allowedServicesOrQueues } }, { service_id: { in: allowedServicesOrQueues } }] : []),
+        ...(menuQueueIds.size ? [{ id: { in: Array.from(menuQueueIds) } }] : []),
+      ],
+    },
+    select: { id: true },
+  });
+  return groups.map((g) => g.id);
+}
+
 function generateTicketNumber(
   format: string,
   seq: number,
@@ -529,6 +587,20 @@ export class QueueController {
       const where: Record<string, unknown> = {};
       if (branch_id) where.branch_id = branch_id;
       if (queue_group_id) where.queue_group_id = queue_group_id;
+      const isPlainOperator =
+        req.user?.type === "company_user" &&
+        (req.user.roleTypes || []).includes("OPERATOR") &&
+        !(req.user.roleTypes || []).some((role) => ["COMPANY_ADMIN", "BRANCH_MANAGER", "SUPERVISOR"].includes(role));
+      if (isPlainOperator && req.user?.companyId) {
+        const permittedQueueIds = await allowedQueueIdsForOperator(req.user!.sub, req.user!.companyId!, branch_id as string | undefined);
+        if (permittedQueueIds) {
+          if (queue_group_id && !permittedQueueIds.includes(String(queue_group_id))) {
+            where.queue_group_id = { in: [] };
+          } else if (!queue_group_id) {
+            where.queue_group_id = { in: permittedQueueIds };
+          }
+        }
+      }
       if (status) {
         const statuses = String(status)
           .split(",")

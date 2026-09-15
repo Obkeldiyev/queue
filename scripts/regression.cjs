@@ -1,31 +1,616 @@
 // Runs against a disposable local PostgreSQL database; never seeds or resets the app database.
-require('dotenv').config();
-const {PrismaClient}=require('@prisma/client');const {spawn,spawnSync}=require('child_process');const assert=require('node:assert/strict');const crypto=require('crypto');const WS=require('ws');
-const source=new URL(process.env.DATABASE_URL);if(!['localhost','127.0.0.1'].includes(source.hostname))throw Error('Regression suite requires local PostgreSQL');
-const database='qms_test_'+crypto.randomBytes(6).toString('hex');const testUrl=new URL(source);testUrl.pathname='/'+database;const admin=new PrismaClient();let db,server;const port=19017;let passed=0;
-const env={...process.env,DATABASE_URL:testUrl.toString(),APP_PORT:String(port),JWT_ACCESS_SECRET:'test-only-access-secret',JWT_REFRESH_SECRET:'test-only-refresh-secret'};
-const check=(name,fn)=>Promise.resolve().then(fn).then(()=>{passed++;console.log('PASS '+name);});
-async function request(path,method='GET',body,token){const res=await fetch(`http://127.0.0.1:${port}/api/v1${path}`,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:res.status,...await res.json()};}
-(async()=>{
- await admin.$executeRawUnsafe(`CREATE DATABASE "${database}"`);
- const push=spawnSync(process.execPath,['node_modules/prisma/build/index.js','db','push','--skip-generate'],{env,encoding:'utf8'});if(push.status!==0)throw Error(push.stderr||push.stdout);
- db=new PrismaClient({datasources:{db:{url:testUrl.toString()}}});
- process.env.JWT_ACCESS_SECRET=env.JWT_ACCESS_SECRET;process.env.JWT_REFRESH_SECRET=env.JWT_REFRESH_SECRET;require('ts-node/register');require('tsconfig-paths/register');const {signAccessToken}=require('../src/utils/jwt');const {hashPassword}=require('../src/utils/password');
- const company=await db.company.create({data:{name:'Regression tenant',slug:database,timezone:'Asia/Tashkent'}});const branch=await db.branch.create({data:{company_id:company.id,name_uz:'Test branch'}});const service=await db.service.create({data:{company_id:company.id,name_uz:'Service'}});const restricted=await db.service.create({data:{company_id:company.id,name_uz:'Restricted'}});const queue=await db.queueGroup.create({data:{company_id:company.id,branch_id:branch.id,service_id:service.id,name_uz:'Queue',prefix:'A',number_format:'A{NUM:3}'}});const q2=await db.queueGroup.create({data:{company_id:company.id,branch_id:branch.id,service_id:restricted.id,name_uz:'Other',prefix:'B',number_format:'B{NUM:3}'}});
- const c1=await db.counter.create({data:{company_id:company.id,branch_id:branch.id,name_uz:'One',number:1}});const c2=await db.counter.create({data:{company_id:company.id,branch_id:branch.id,name_uz:'Two',number:2}});await db.counterQueue.createMany({data:[{counter_id:c1.id,queue_group_id:queue.id},{counter_id:c1.id,queue_group_id:q2.id},{counter_id:c2.id,queue_group_id:queue.id}]});
- const user=await db.companyUser.create({data:{company_id:company.id,branch_id:branch.id,first_name:'Test',last_name:'Operator',email:'test@example.invalid',password_hash:hashPassword('test-password'),allowed_service_ids:[service.id],default_counter_id:c1.id}});const user2=await db.companyUser.create({data:{company_id:company.id,branch_id:branch.id,first_name:'Second',last_name:'Operator',email:'second@example.invalid',password_hash:hashPassword('test-password'),default_counter_id:c2.id}});
- const payload={sub:user.id,type:'company_user',email:user.email,companyId:company.id,branchId:branch.id,roleTypes:['OPERATOR']};const token=signAccessToken(payload);const token2=signAccessToken({...payload,sub:user2.id});const adminToken=signAccessToken({...payload,roleTypes:['COMPANY_ADMIN']});
- server=spawn(process.execPath,['-r','ts-node/register','-r','tsconfig-paths/register','src/index.ts'],{env,stdio:['ignore','pipe','pipe'],windowsHide:true});let errors='';server.stderr.on('data',b=>errors+=b);server.stdout.on('data',()=>{});for(let i=0;i<100;i++){try{if((await request('/health')).status===200)break;}catch{}await new Promise(r=>setTimeout(r,100));if(i===99)throw Error('Server did not start: '+errors);}
- await check('public billboard counters work without an employee session',async()=>{const r=await request(`/counters/public?branch_id=${branch.id}`);assert.equal(r.status,200);assert.equal(r.data.length,2);});
- await check('session open is idempotent and assigned counter enforced',async()=>{assert.equal((await request('/counters/sessions/open','POST',{counter_id:c1.id},token)).status,201);assert.equal((await request('/counters/sessions/open','POST',{counter_id:c1.id},token)).status,200);assert.equal((await request('/counters/sessions/open','POST',{counter_id:c2.id},token)).status,403);assert.equal(await db.counterSession.count({where:{company_user_id:user.id,is_active:true}}),1);});
- const t=await db.ticket.create({data:{queue_group_id:queue.id,branch_id:branch.id,ticket_number:'A001'}});await db.ticket.create({data:{queue_group_id:q2.id,branch_id:branch.id,ticket_number:'B001',priority:100}});await db.ticket.create({data:{queue_group_id:queue.id,branch_id:branch.id,ticket_number:'A002'}});
- await check('concurrent calls claim one ticket and respect service restrictions',async()=>{const r=await Promise.all([request('/queues/tickets/call-next','POST',{counter_id:c1.id},token),request('/queues/tickets/call-next','POST',{counter_id:c1.id},token)]);assert.deepEqual(r.map(x=>x.status).sort(),[200,409]);assert.equal(r.find(x=>x.status===200).data.queue_group_id,queue.id);});
- await check('transfer releases ownership and reaches destination counter',async()=>{assert.equal((await request(`/queues/tickets/${t.id}/transfer`,'PATCH',{to_counter_id:c2.id},token)).status,200);assert.equal((await request('/counters/sessions/open','POST',{counter_id:c2.id},token2)).status,201);const r=await request('/queues/tickets/call-next','POST',{counter_id:c2.id},token2);assert.equal(r.data.id,t.id);assert.equal((await request(`/queues/tickets/${t.id}/complete`,'PATCH',{},token)).status,403);assert.equal((await request(`/queues/tickets/${t.id}/complete`,'PATCH',{},token2)).status,200);});
- await check('menu translations, nested ordering and recursive deletion persist',async()=>{const root=(await request('/menus','POST',{name:'Root',name_ru:'Корень'},adminToken)).data;const one=(await request('/menus','POST',{name:'One',parent_id:root.id},adminToken)).data;const two=(await request('/menus','POST',{name:'Two',parent_id:root.id},adminToken)).data;assert.equal((await request('/menus/reorder','PATCH',{items:[{id:one.id,sort_order:1},{id:two.id,sort_order:0}]},adminToken)).status,200);const list=(await request(`/menus?company_id=${company.id}`)).data;assert.equal(list[0].name_ru,'Корень');assert.equal(list[0].children[0].id,two.id);assert.equal((await request(`/menus/${root.id}`,'PATCH',{parent_id:one.id},adminToken)).status,400);assert.equal((await request(`/menus/${root.id}`,'DELETE',undefined,adminToken)).status,200);assert.equal(await db.menu.count(),0);});
- await check('chat requires a name, completes once, and counts toward KPI',async()=>{const c=(await request('/operations/conversations','POST',{channel:'online'},token)).data;assert.equal((await request(`/operations/chat/${c.token}/messages`,'POST',{text:'hello'})).status,409);assert.equal((await request(`/operations/chat/${c.token}/join`,'POST',{name:'Visitor'})).status,200);assert.equal((await request(`/operations/chat/${c.token}/messages`,'POST',{text:'hello'})).status,200);assert.equal((await request(`/operations/conversations/${c.id}/messages`,'POST',{text:'Welcome'},token)).status,200);assert.equal((await request(`/operations/conversations/${c.id}/complete`,'POST',{},token)).status,200);assert.equal((await request(`/operations/conversations/${c.id}/complete`,'POST',{},token)).status,409);assert.equal((await request(`/operations/chat/${c.token}/messages`,'POST',{text:'late'})).status,409);await request(`/operations/compensation/${user.id}`,'PATCH',{salary:500,rate:3},adminToken);const op=(await request('/operations/summary','GET',undefined,adminToken)).data.find(u=>u.id===user.id);assert.equal(op.served,1);assert.equal(op.earned_kpi,3);});
- await check('external service requires evidence and password verifies current secret',async()=>{assert.equal((await request('/operations/conversations','POST',{channel:'telegram',customer_name:'Visitor'},token)).status,400);assert.equal((await request('/operations/password','POST',{current_password:'incorrect',new_password:'new-password'},token)).status,400);assert.equal((await request('/operations/password','POST',{current_password:'test-password',new_password:'new-password'},token)).status,200);});
- await check('audit pagination is bounded and operator sees only own activity',async()=>{const r=await request('/audit-logs?limit=1&page=1','GET',undefined,token);assert.equal(r.data.length,1);assert.ok(r.meta.total>1);assert.equal(r.data[0].company_user_id,user.id);});
- await check('company configuration mutation reaches company socket subscriber',async()=>{const socket=new WS(`ws://127.0.0.1:${port}/ws?companyId=${company.id}`);await new Promise((r,j)=>{socket.once('open',r);socket.once('error',j);});const event=new Promise((r,j)=>{const timer=setTimeout(()=>j(Error('No configuration event')),3000);socket.on('message',b=>{const m=JSON.parse(b);if(m.event==='resource:changed'){clearTimeout(timer);r(m);}});});await request('/menus','POST',{name:'Live'},adminToken);await event;socket.close();});
- await check('manual reset preserves ticket history',async()=>{const r=await request('/operations/reset','POST',{branch_id:branch.id},adminToken);assert.equal(r.status,200);assert.ok(r.data.count>=2);assert.equal(await db.ticket.count({where:{status:'WAITING'}}),0);assert.ok(await db.ticketHistory.count({where:{note:'Administrator queue reset'}}));});
- console.log(`${passed} regression checks passed.`);
-})().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{if(server){server.kill();await new Promise(r=>server.once('exit',r));}if(db)await db.$disconnect();await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);await admin.$disconnect();});
+require("dotenv").config();
+const { PrismaClient } = require("@prisma/client");
+const { spawn, spawnSync } = require("child_process");
+const assert = require("node:assert/strict");
+const crypto = require("crypto");
+const WS = require("ws");
+const source = new URL(process.env.DATABASE_URL);
+if (!["localhost", "127.0.0.1"].includes(source.hostname))
+  throw Error("Regression suite requires local PostgreSQL");
+const database = "qms_test_" + crypto.randomBytes(6).toString("hex");
+const testUrl = new URL(source);
+testUrl.pathname = "/" + database;
+const admin = new PrismaClient();
+let db, server;
+const port = 19017;
+let passed = 0;
+const env = {
+  ...process.env,
+  DATABASE_URL: testUrl.toString(),
+  APP_PORT: String(port),
+  JWT_ACCESS_SECRET: "test-only-access-secret",
+  JWT_REFRESH_SECRET: "test-only-refresh-secret",
+};
+const check = (name, fn) =>
+  Promise.resolve()
+    .then(fn)
+    .then(() => {
+      passed++;
+      console.log("PASS " + name);
+    });
+async function request(path, method = "GET", body, token) {
+  const res = await fetch(`http://127.0.0.1:${port}/api/v1${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, ...(await res.json()) };
+}
+(async () => {
+  await admin.$executeRawUnsafe(`CREATE DATABASE "${database}"`);
+  const push = spawnSync(
+    process.execPath,
+    ["node_modules/prisma/build/index.js", "db", "push", "--skip-generate"],
+    { env, encoding: "utf8" },
+  );
+  if (push.status !== 0) throw Error(push.stderr || push.stdout);
+  db = new PrismaClient({ datasources: { db: { url: testUrl.toString() } } });
+  process.env.JWT_ACCESS_SECRET = env.JWT_ACCESS_SECRET;
+  process.env.JWT_REFRESH_SECRET = env.JWT_REFRESH_SECRET;
+  require("ts-node/register");
+  require("tsconfig-paths/register");
+  const { signAccessToken } = require("../src/utils/jwt");
+  const { hashPassword } = require("../src/utils/password");
+  const company = await db.company.create({
+    data: {
+      name: "Regression tenant",
+      slug: database,
+      timezone: "Asia/Tashkent",
+    },
+  });
+  const branch = await db.branch.create({
+    data: { company_id: company.id, name_uz: "Test branch" },
+  });
+  const service = await db.service.create({
+    data: { company_id: company.id, name_uz: "Service" },
+  });
+  const restricted = await db.service.create({
+    data: { company_id: company.id, name_uz: "Restricted" },
+  });
+  const queue = await db.queueGroup.create({
+    data: {
+      company_id: company.id,
+      branch_id: branch.id,
+      service_id: service.id,
+      name_uz: "Queue",
+      prefix: "A",
+      number_format: "A{NUM:3}",
+    },
+  });
+  const q2 = await db.queueGroup.create({
+    data: {
+      company_id: company.id,
+      branch_id: branch.id,
+      service_id: restricted.id,
+      name_uz: "Other",
+      prefix: "B",
+      number_format: "B{NUM:3}",
+    },
+  });
+  const c1 = await db.counter.create({
+    data: {
+      company_id: company.id,
+      branch_id: branch.id,
+      name_uz: "One",
+      number: 1,
+    },
+  });
+  const c2 = await db.counter.create({
+    data: {
+      company_id: company.id,
+      branch_id: branch.id,
+      name_uz: "Two",
+      number: 2,
+    },
+  });
+  await db.counterQueue.createMany({
+    data: [
+      { counter_id: c1.id, queue_group_id: queue.id },
+      { counter_id: c1.id, queue_group_id: q2.id },
+      { counter_id: c2.id, queue_group_id: queue.id },
+    ],
+  });
+  const user = await db.companyUser.create({
+    data: {
+      company_id: company.id,
+      branch_id: branch.id,
+      first_name: "Test",
+      last_name: "Operator",
+      email: "test@example.invalid",
+      password_hash: hashPassword("test-password"),
+      allowed_service_ids: [service.id],
+      default_counter_id: c1.id,
+    },
+  });
+  const user2 = await db.companyUser.create({
+    data: {
+      company_id: company.id,
+      branch_id: branch.id,
+      first_name: "Second",
+      last_name: "Operator",
+      email: "second@example.invalid",
+      password_hash: hashPassword("test-password"),
+      default_counter_id: c2.id,
+    },
+  });
+  const payload = {
+    sub: user.id,
+    type: "company_user",
+    email: user.email,
+    companyId: company.id,
+    branchId: branch.id,
+    roleTypes: ["OPERATOR"],
+  };
+  const token = signAccessToken(payload);
+  const token2 = signAccessToken({ ...payload, sub: user2.id });
+  const adminToken = signAccessToken({
+    ...payload,
+    roleTypes: ["COMPANY_ADMIN"],
+  });
+  server = spawn(
+    process.execPath,
+    ["-r", "ts-node/register", "-r", "tsconfig-paths/register", "src/index.ts"],
+    { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  let errors = "";
+  server.stderr.on("data", (b) => (errors += b));
+  server.stdout.on("data", () => {});
+  for (let i = 0; i < 100; i++) {
+    try {
+      if ((await request("/health")).status === 200) break;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 100));
+    if (i === 99) throw Error("Server did not start: " + errors);
+  }
+  await check(
+    "public billboard counters work without an employee session",
+    async () => {
+      const r = await request(`/counters/public?branch_id=${branch.id}`);
+      assert.equal(r.status, 200);
+      assert.equal(r.data.length, 2);
+    },
+  );
+  await check(
+    "session open is idempotent and assigned counter enforced",
+    async () => {
+      assert.equal(
+        (
+          await request(
+            "/counters/sessions/open",
+            "POST",
+            { counter_id: c1.id },
+            token,
+          )
+        ).status,
+        201,
+      );
+      assert.equal(
+        (
+          await request(
+            "/counters/sessions/open",
+            "POST",
+            { counter_id: c1.id },
+            token,
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request(
+            "/counters/sessions/open",
+            "POST",
+            { counter_id: c2.id },
+            token,
+          )
+        ).status,
+        403,
+      );
+      assert.equal(
+        await db.counterSession.count({
+          where: { company_user_id: user.id, is_active: true },
+        }),
+        1,
+      );
+    },
+  );
+  const t = await db.ticket.create({
+    data: {
+      queue_group_id: queue.id,
+      branch_id: branch.id,
+      ticket_number: "A001",
+    },
+  });
+  await db.ticket.create({
+    data: {
+      queue_group_id: q2.id,
+      branch_id: branch.id,
+      ticket_number: "B001",
+      priority: 100,
+    },
+  });
+  await db.ticket.create({
+    data: {
+      queue_group_id: queue.id,
+      branch_id: branch.id,
+      ticket_number: "A002",
+    },
+  });
+  await check(
+    "public ticket list is branch scoped and ticket issuing keeps prefix sequence",
+    async () => {
+      assert.equal((await request("/queues/tickets/list")).status, 400);
+      const issued = await request("/queues/tickets/issue", "POST", {
+        queue_group_id: queue.id,
+        branch_id: branch.id,
+      });
+      assert.equal(issued.status, 201);
+      assert.equal(issued.data.ticket_number, "A003");
+      const list = await request(
+        `/queues/tickets/list?branch_id=${branch.id}&status=WAITING&limit=20`,
+      );
+      assert.equal(list.status, 200);
+      assert.equal(list.data[0].ticket_number, "A001");
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(list.data[0], "customer"),
+        false,
+      );
+    },
+  );
+  await check(
+    "concurrent calls claim one ticket and respect service restrictions",
+    async () => {
+      const r = await Promise.all([
+        request(
+          "/queues/tickets/call-next",
+          "POST",
+          { counter_id: c1.id },
+          token,
+        ),
+        request(
+          "/queues/tickets/call-next",
+          "POST",
+          { counter_id: c1.id },
+          token,
+        ),
+      ]);
+      assert.deepEqual(r.map((x) => x.status).sort(), [200, 409]);
+      assert.equal(
+        r.find((x) => x.status === 200).data.queue_group_id,
+        queue.id,
+      );
+    },
+  );
+  await check(
+    "transfer releases ownership and reaches destination counter",
+    async () => {
+      assert.equal(
+        (
+          await request(
+            `/queues/tickets/${t.id}/transfer`,
+            "PATCH",
+            { to_counter_id: c2.id },
+            token,
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request(
+            "/counters/sessions/open",
+            "POST",
+            { counter_id: c2.id },
+            token2,
+          )
+        ).status,
+        201,
+      );
+      const r = await request(
+        "/queues/tickets/call-next",
+        "POST",
+        { counter_id: c2.id },
+        token2,
+      );
+      assert.equal(r.data.id, t.id);
+      assert.equal(
+        (await request(`/queues/tickets/${t.id}/complete`, "PATCH", {}, token))
+          .status,
+        403,
+      );
+      assert.equal(
+        (await request(`/queues/tickets/${t.id}/complete`, "PATCH", {}, token2))
+          .status,
+        200,
+      );
+    },
+  );
+  await check(
+    "menu translations, nested ordering and recursive deletion persist",
+    async () => {
+      const root = (
+        await request(
+          "/menus",
+          "POST",
+          { name: "Root", name_ru: "Корень" },
+          adminToken,
+        )
+      ).data;
+      const one = (
+        await request(
+          "/menus",
+          "POST",
+          { name: "One", parent_id: root.id },
+          adminToken,
+        )
+      ).data;
+      const two = (
+        await request(
+          "/menus",
+          "POST",
+          { name: "Two", parent_id: root.id },
+          adminToken,
+        )
+      ).data;
+      assert.equal(
+        (
+          await request(
+            "/menus/reorder",
+            "PATCH",
+            {
+              items: [
+                { id: one.id, sort_order: 1 },
+                { id: two.id, sort_order: 0 },
+              ],
+            },
+            adminToken,
+          )
+        ).status,
+        200,
+      );
+      const list = (await request(`/menus?company_id=${company.id}`)).data;
+      assert.equal(list[0].name_ru, "Корень");
+      assert.equal(list[0].children[0].id, two.id);
+      assert.equal(
+        (
+          await request(
+            `/menus/${root.id}`,
+            "PATCH",
+            { parent_id: one.id },
+            adminToken,
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (await request(`/menus/${root.id}`, "DELETE", undefined, adminToken))
+          .status,
+        200,
+      );
+      assert.equal(await db.menu.count(), 0);
+    },
+  );
+  await check(
+    "chat requires a name, completes once, and counts toward KPI",
+    async () => {
+      const c = (
+        await request(
+          "/operations/conversations",
+          "POST",
+          { channel: "online" },
+          token,
+        )
+      ).data;
+      assert.equal(
+        (
+          await request(`/operations/chat/${c.token}/messages`, "POST", {
+            text: "hello",
+          })
+        ).status,
+        409,
+      );
+      assert.equal(
+        (
+          await request(`/operations/chat/${c.token}/join`, "POST", {
+            name: "Visitor",
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request(`/operations/chat/${c.token}/messages`, "POST", {
+            text: "hello",
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request(
+            `/operations/conversations/${c.id}/messages`,
+            "POST",
+            { text: "Welcome" },
+            token,
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request(
+            `/operations/conversations/${c.id}/complete`,
+            "POST",
+            {},
+            token,
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await request(
+            `/operations/conversations/${c.id}/complete`,
+            "POST",
+            {},
+            token,
+          )
+        ).status,
+        409,
+      );
+      assert.equal(
+        (
+          await request(`/operations/chat/${c.token}/messages`, "POST", {
+            text: "late",
+          })
+        ).status,
+        409,
+      );
+      await request(
+        `/operations/compensation/${user.id}`,
+        "PATCH",
+        { salary: 500, rate: 3 },
+        adminToken,
+      );
+      const op = (
+        await request("/operations/summary", "GET", undefined, adminToken)
+      ).data.find((u) => u.id === user.id);
+      assert.equal(op.served, 1);
+      assert.equal(op.earned_kpi, 3);
+    },
+  );
+  await check("operators can read company working rules", async () => {
+    await db.company.update({
+      where: { id: company.id },
+      data: {
+        settings: {
+          rules: {
+            max_shift_hours: 9,
+            max_service_minutes: 12,
+            instructions: "Be precise",
+          },
+        },
+      },
+    });
+    const r = await request("/operations/rules", "GET", undefined, token);
+    assert.equal(r.status, 200);
+    assert.equal(r.data.instructions, "Be precise");
+    assert.equal(r.data.max_shift_hours, 9);
+  });
+  await check(
+    "external service requires evidence and password verifies current secret",
+    async () => {
+      assert.equal(
+        (
+          await request(
+            "/operations/conversations",
+            "POST",
+            { channel: "telegram", customer_name: "Visitor" },
+            token,
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await request(
+            "/operations/password",
+            "POST",
+            { current_password: "incorrect", new_password: "new-password" },
+            token,
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await request(
+            "/operations/password",
+            "POST",
+            { current_password: "test-password", new_password: "new-password" },
+            token,
+          )
+        ).status,
+        200,
+      );
+    },
+  );
+  await check(
+    "audit pagination is bounded and operator sees only own activity",
+    async () => {
+      const r = await request(
+        "/audit-logs?limit=1&page=1",
+        "GET",
+        undefined,
+        token,
+      );
+      assert.equal(r.data.length, 1);
+      assert.ok(r.meta.total > 1);
+      assert.equal(r.data[0].company_user_id, user.id);
+    },
+  );
+  await check(
+    "company configuration mutation reaches company socket subscriber",
+    async () => {
+      const socket = new WS(
+        `ws://127.0.0.1:${port}/ws?companyId=${company.id}`,
+      );
+      await new Promise((r, j) => {
+        socket.once("open", r);
+        socket.once("error", j);
+      });
+      const event = new Promise((r, j) => {
+        const timer = setTimeout(
+          () => j(Error("No configuration event")),
+          3000,
+        );
+        socket.on("message", (b) => {
+          const m = JSON.parse(b);
+          if (m.event === "resource:changed") {
+            clearTimeout(timer);
+            r(m);
+          }
+        });
+      });
+      await request("/menus", "POST", { name: "Live" }, adminToken);
+      await event;
+      socket.close();
+    },
+  );
+  await check("manual reset preserves ticket history", async () => {
+    const r = await request(
+      "/operations/reset",
+      "POST",
+      { branch_id: branch.id },
+      adminToken,
+    );
+    assert.equal(r.status, 200);
+    assert.ok(r.data.count >= 2);
+    assert.equal(await db.ticket.count({ where: { status: "WAITING" } }), 0);
+    assert.ok(
+      await db.ticketHistory.count({
+        where: { note: "Administrator queue reset" },
+      }),
+    );
+  });
+  console.log(`${passed} regression checks passed.`);
+})()
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    if (server) {
+      server.kill();
+      await new Promise((r) => server.once("exit", r));
+    }
+    if (db) await db.$disconnect();
+    await admin.$executeRawUnsafe(
+      `DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`,
+    );
+    await admin.$disconnect();
+  });

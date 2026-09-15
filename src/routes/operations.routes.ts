@@ -108,6 +108,30 @@ router.post(
   }),
 );
 router.use(authenticate, requireCompanyUser);
+
+router.get(
+  "/rules",
+  wrap(async (req, res) => {
+    const company = await prisma.company.findUnique({
+      where: { id: req.user!.companyId! },
+      select: { settings: true },
+    });
+    const rules = ((company?.settings as any)?.rules || {}) as Record<
+      string,
+      unknown
+    >;
+    res.json({
+      success: true,
+      data: {
+        max_shift_hours: Number(rules.max_shift_hours || 12),
+        max_service_minutes: Number(rules.max_service_minutes || 30),
+        instructions:
+          typeof rules.instructions === "string" ? rules.instructions : "",
+      },
+    });
+  }),
+);
+
 router.post(
   "/reset",
   requireCompanyAdmin,

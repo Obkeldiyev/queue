@@ -32,9 +32,13 @@ async function allowedQueueIdsForOperator(userId: string, companyId: string, bra
     where: { id: userId },
     select: { allowed_service_ids: true, allowed_menu_ids: true } as any,
   });
-  const allowedServicesOrQueues = jsonStringArray((operator as any)?.allowed_service_ids);
-  const allowedMenuIds = jsonStringArray((operator as any)?.allowed_menu_ids);
-  if (!allowedServicesOrQueues.length && !allowedMenuIds.length) return null;
+  const serviceAccessValue = (operator as any)?.allowed_service_ids;
+  const menuAccessValue = (operator as any)?.allowed_menu_ids;
+  const isRestricted = serviceAccessValue !== null && serviceAccessValue !== undefined || menuAccessValue !== null && menuAccessValue !== undefined;
+  const allowedServicesOrQueues = jsonStringArray(serviceAccessValue);
+  const allowedMenuIds = jsonStringArray(menuAccessValue);
+  if (!isRestricted) return null;
+  if (!allowedServicesOrQueues.length && !allowedMenuIds.length) return [];
 
   const menuQueueIds = new Set<string>();
   if (allowedMenuIds.length) {
@@ -455,12 +459,11 @@ export class QueueController {
           where: { id: req.user!.sub },
           select: { allowed_service_ids: true, allowed_menu_ids: true, company_id: true } as any,
         });
-        const allowedServicesOrQueues = Array.isArray((operator as any)?.allowed_service_ids)
-          ? ((operator as any).allowed_service_ids as string[])
-          : [];
-        const allowedMenuIds = Array.isArray((operator as any)?.allowed_menu_ids)
-          ? ((operator as any).allowed_menu_ids as string[])
-          : [];
+        const serviceAccessValue = (operator as any)?.allowed_service_ids;
+        const menuAccessValue = (operator as any)?.allowed_menu_ids;
+        const isRestricted = serviceAccessValue !== null && serviceAccessValue !== undefined || menuAccessValue !== null && menuAccessValue !== undefined;
+        const allowedServicesOrQueues = jsonStringArray(serviceAccessValue);
+        const allowedMenuIds = jsonStringArray(menuAccessValue);
         let allowedQueueGroupIdsFromMenus = new Set<string>();
         if (allowedMenuIds.length) {
           const menus = await tx.menu.findMany({
@@ -481,7 +484,6 @@ export class QueueController {
           };
           for (const menuId of allowedMenuIds) visit(menuId);
         }
-        const isRestricted = allowedServicesOrQueues.length > 0 || allowedMenuIds.length > 0;
         const ids = counter.queue_groups
           .filter((q) => {
             if (!q.queue_group.is_active) return false;
@@ -587,13 +589,9 @@ export class QueueController {
       const where: Record<string, unknown> = {};
       if (branch_id) where.branch_id = branch_id;
       if (queue_group_id) where.queue_group_id = queue_group_id;
-      const isPlainOperator =
-        req.user?.type === "company_user" &&
-        (req.user.roleTypes || []).includes("OPERATOR") &&
-        !(req.user.roleTypes || []).some((role) => ["COMPANY_ADMIN", "BRANCH_MANAGER", "SUPERVISOR"].includes(role));
-      if (isPlainOperator && req.user?.companyId) {
-        const permittedQueueIds = await allowedQueueIdsForOperator(req.user!.sub, req.user!.companyId!, branch_id as string | undefined);
-        if (permittedQueueIds) {
+      if (req.user?.type === "company_user" && req.user?.companyId) {
+        const permittedQueueIds = await allowedQueueIdsForOperator(req.user.sub, req.user.companyId, branch_id as string | undefined);
+        if (permittedQueueIds !== null) {
           if (queue_group_id && !permittedQueueIds.includes(String(queue_group_id))) {
             where.queue_group_id = { in: [] };
           } else if (!queue_group_id) {

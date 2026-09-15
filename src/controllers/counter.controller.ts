@@ -3,13 +3,21 @@ import prisma from "../prisma/client";
 import { ErrorHandler } from "@errors";
 import { createAuditLog } from "@utils";
 import { broadcast } from "../utils/websocket";
-import type { CreateCounterDto, UpdateCounterDto, AssignQueueToCounterDto, OpenCounterSessionDto } from "../dto/counter.dto";
+import type {
+  CreateCounterDto,
+  UpdateCounterDto,
+  AssignQueueToCounterDto,
+  OpenCounterSessionDto,
+} from "../dto/counter.dto";
 import type { AuthRequest } from "@middlewares";
 
 export class CounterController {
   static async list(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const companyId = req.user?.type === "company_user" ? req.user.companyId : (req.query.company_id as string | undefined);
+      const companyId =
+        req.user?.type === "company_user"
+          ? req.user.companyId
+          : (req.query.company_id as string | undefined);
       const branchId = req.query.branch_id as string | undefined;
       const where: Record<string, unknown> = {};
       if (companyId) where.company_id = companyId;
@@ -19,28 +27,47 @@ export class CounterController {
         where,
         orderBy: { number: "asc" },
         include: {
-          queue_groups: { include: { queue_group: { include: { service: true } } } },
+          queue_groups: {
+            include: { queue_group: { include: { service: true } } },
+          },
           sessions: {
             where: { is_active: true },
-            include: { company_user: { select: { id: true, first_name: true, last_name: true } } },
+            include: {
+              company_user: {
+                select: { id: true, first_name: true, last_name: true },
+              },
+            },
             take: 1,
           },
           _count: { select: { tickets: true } },
         },
       });
       res.json({ success: true, data: counters });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
   static async create(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const body = req.body as CreateCounterDto & { company_id?: string };
-      const companyId = req.user?.type === "company_user" ? req.user.companyId : (body.company_id ?? undefined);
+      const companyId =
+        req.user?.type === "company_user"
+          ? req.user.companyId
+          : (body.company_id ?? undefined);
       if (!companyId) return next(new ErrorHandler("company_id required", 400));
       if (!body.name_uz) return next(new ErrorHandler("name_uz required", 400));
 
-      const exists = await prisma.counter.findFirst({ where: { branch_id: body.branch_id, number: body.number } });
-      if (exists) return next(new ErrorHandler(`Counter number ${body.number} already exists in this branch`, 409));
+      const exists = await prisma.counter.findFirst({
+        where: { branch_id: body.branch_id, number: body.number },
+      });
+      if (exists)
+        return next(
+          new ErrorHandler(
+            `Counter number ${body.number} already exists in this branch`,
+            409,
+          ),
+        );
 
       const counter = await prisma.counter.create({
         data: {
@@ -55,13 +82,19 @@ export class CounterController {
       });
 
       await createAuditLog({
-        req, companyId,
-        companyUserId: req.user?.type === "company_user" ? req.user.sub : undefined,
-        action: "CREATE", entityType: "Counter", entityId: counter.id,
+        req,
+        companyId,
+        companyUserId:
+          req.user?.type === "company_user" ? req.user.sub : undefined,
+        action: "CREATE",
+        entityType: "Counter",
+        entityId: counter.id,
       });
 
       res.status(201).json({ success: true, data: counter });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
   static async findOne(req: AuthRequest, res: Response, next: NextFunction) {
@@ -69,17 +102,25 @@ export class CounterController {
       const counter = await prisma.counter.findUnique({
         where: { id: req.params.id },
         include: {
-          queue_groups: { include: { queue_group: { include: { service: true } } } },
+          queue_groups: {
+            include: { queue_group: { include: { service: true } } },
+          },
           sessions: {
             where: { is_active: true },
-            include: { company_user: { select: { id: true, first_name: true, last_name: true } } },
+            include: {
+              company_user: {
+                select: { id: true, first_name: true, last_name: true },
+              },
+            },
           },
           devices: true,
         },
       });
       if (!counter) return next(new ErrorHandler("Counter not found", 404));
       res.json({ success: true, data: counter });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
   static async update(req: AuthRequest, res: Response, next: NextFunction) {
@@ -91,39 +132,65 @@ export class CounterController {
           ...(body.name_uz !== undefined && { name_uz: body.name_uz }),
           ...(body.name_ru !== undefined && { name_ru: body.name_ru }),
           ...(body.name_en !== undefined && { name_en: body.name_en }),
-          ...(body.description !== undefined && { description: body.description }),
+          ...(body.description !== undefined && {
+            description: body.description,
+          }),
           ...(body.is_active !== undefined && { is_active: body.is_active }),
           ...(body.number !== undefined && { number: Number(body.number) }),
         },
       });
       res.json({ success: true, data: counter });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
   static async remove(_req: AuthRequest, res: Response, next: NextFunction) {
     try {
       await prisma.counter.delete({ where: { id: _req.params.id } });
       res.json({ success: true, message: "Counter deleted" });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
-  static async assignQueue(req: AuthRequest, res: Response, next: NextFunction) {
+  static async assignQueue(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ) {
     try {
       const body = req.body as AssignQueueToCounterDto;
       const existing = await prisma.counterQueue.findFirst({
-        where: { counter_id: req.params.id, queue_group_id: body.queue_group_id },
+        where: {
+          counter_id: req.params.id,
+          queue_group_id: body.queue_group_id,
+        },
       });
-      if (existing) return next(new ErrorHandler("Queue already assigned to this counter", 409));
+      if (existing)
+        return next(
+          new ErrorHandler("Queue already assigned to this counter", 409),
+        );
 
       const cq = await prisma.counterQueue.create({
-        data: { counter_id: req.params.id, queue_group_id: body.queue_group_id, sort_order: body.sort_order ?? 0 },
+        data: {
+          counter_id: req.params.id,
+          queue_group_id: body.queue_group_id,
+          sort_order: body.sort_order ?? 0,
+        },
         include: { queue_group: { include: { service: true } } },
       });
       res.status(201).json({ success: true, data: cq });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
-  static async removeQueue(req: AuthRequest, res: Response, next: NextFunction) {
+  static async removeQueue(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ) {
     try {
       await prisma.counterQueue.delete({
         where: {
@@ -134,27 +201,30 @@ export class CounterController {
         },
       });
       res.json({ success: true, message: "Queue unassigned" });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 
-  static async openSession(req: AuthRequest, res: Response, next: NextFunction) {
+  static async openSession(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ) {
     try {
       const body = req.body as OpenCounterSessionDto;
-      console.log("openSession called", { body, user: req.user && { id: req.user.sub, type: req.user.type, companyId: req.user.companyId, branchId: req.user.branchId } });
-      if (req.user?.type !== "company_user") return next(new ErrorHandler("Company user required", 403));
-
-      // Close any existing sessions for this user
-      await prisma.counterSession.updateMany({
-        where: { company_user_id: req.user.sub, is_active: true },
-        data: { is_active: false, ended_at: new Date() },
-      });
+      if (req.user?.type !== "company_user")
+        return next(new ErrorHandler("Company user required", 403));
 
       // If client didn't provide a counter_id, prefer admin-assigned operator counter, otherwise pick sensible default
       let counterIdToOpen = (body as any)?.counter_id as string | undefined;
       if (!counterIdToOpen) {
         // Try operator's assigned default counter on their user record
         // select typed as any because Prisma client hasn't been regenerated in this environment yet
-        const companyUser = await prisma.companyUser.findUnique({ where: { id: req.user.sub }, select: { default_counter_id: true } as any }) as any;
+        const companyUser = (await prisma.companyUser.findUnique({
+          where: { id: req.user.sub },
+          select: { default_counter_id: true } as any,
+        })) as any;
         if (companyUser?.default_counter_id) {
           counterIdToOpen = companyUser.default_counter_id;
         }
@@ -162,26 +232,100 @@ export class CounterController {
 
       if (!counterIdToOpen) {
         const defaultCounter = await prisma.counter.findFirst({
-          where: { company_id: req.user.companyId ?? undefined, branch_id: req.user.branchId ?? undefined, is_active: true },
+          where: {
+            company_id: req.user.companyId ?? undefined,
+            branch_id: req.user.branchId ?? undefined,
+            is_active: true,
+          },
           orderBy: { number: "asc" },
         });
-        if (!defaultCounter) return next(new ErrorHandler("No available counter to open session", 400));
+        if (!defaultCounter)
+          return next(
+            new ErrorHandler("No available counter to open session", 400),
+          );
         counterIdToOpen = defaultCounter.id;
       }
 
       if (!counterIdToOpen) {
-        console.warn("openSession: computed counterIdToOpen is missing", { body, user: req.user });
-        return next(new ErrorHandler("No available counter to open session", 400));
+        console.warn("openSession: computed counterIdToOpen is missing", {
+          body,
+          user: req.user,
+        });
+        return next(
+          new ErrorHandler("No available counter to open session", 400),
+        );
       }
 
-      // Use explicit nested connect to avoid passing undefined `counter_id` to Prisma.
-      const session = await prisma.counterSession.create({
-        data: {
-          counter: { connect: { id: counterIdToOpen } },
-          company_user: { connect: { id: req.user.sub } },
-        },
-        include: { counter: true, company_user: { select: { id: true, first_name: true, last_name: true } } },
+      const operator = await prisma.companyUser.findUnique({
+        where: { id: req.user.sub },
       });
+      if (
+        operator?.default_counter_id &&
+        operator.default_counter_id !== counterIdToOpen &&
+        !(req.user.roleTypes || []).some((r) =>
+          ["COMPANY_ADMIN", "BRANCH_MANAGER", "SUPERVISOR"].includes(r),
+        )
+      )
+        return next(new ErrorHandler("Use your assigned counter", 403));
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM counters WHERE id = ${counterIdToOpen}::uuid FOR UPDATE`;
+        const selectedCounter = await tx.counter.findFirst({
+          where: {
+            id: counterIdToOpen,
+            company_id: req.user!.companyId,
+            is_active: true,
+          },
+        });
+        if (!selectedCounter)
+          throw new ErrorHandler("Counter unavailable", 404);
+        const occupied = await tx.counterSession.findFirst({
+          where: { counter_id: counterIdToOpen, is_active: true },
+        });
+        if (occupied?.company_user_id === req.user!.sub) {
+          const existing = await tx.counterSession.findUniqueOrThrow({
+            where: { id: occupied.id },
+            include: {
+              counter: true,
+              company_user: {
+                select: { id: true, first_name: true, last_name: true },
+              },
+            },
+          });
+          return { session: existing, created: false };
+        }
+        if (occupied)
+          throw new ErrorHandler("This counter is already in use", 409);
+        if (
+          await tx.ticket.findFirst({
+            where: {
+              served_by_id: req.user!.sub,
+              status: { in: ["CALLED", "SERVING"] },
+            },
+          })
+        )
+          throw new ErrorHandler(
+            "Complete the active ticket before switching counters",
+            409,
+          );
+        await tx.counterSession.updateMany({
+          where: { company_user_id: req.user!.sub, is_active: true },
+          data: { is_active: false, ended_at: new Date() },
+        });
+        const created = await tx.counterSession.create({
+          data: {
+            counter: { connect: { id: counterIdToOpen } },
+            company_user: { connect: { id: req.user!.sub } },
+          },
+          include: {
+            counter: true,
+            company_user: {
+              select: { id: true, first_name: true, last_name: true },
+            },
+          },
+        });
+        return { session: created, created: true };
+      });
+      const { session, created } = result;
 
       await createAuditLog({
         req,
@@ -191,7 +335,11 @@ export class CounterController {
         action: "TOGGLE_STATUS",
         entityType: "CounterSession",
         entityId: session.id,
-        metadata: { state: "opened", counter_id: session.counter.id, counter_number: session.counter.number },
+        metadata: {
+          state: "opened",
+          counter_id: session.counter.id,
+          counter_number: session.counter.number,
+        },
       });
 
       broadcast({
@@ -206,18 +354,34 @@ export class CounterController {
         },
       });
 
-      res.status(201).json({ success: true, data: session });
+      res.status(created ? 201 : 200).json({ success: true, data: session });
     } catch (e) {
-      try {
-        console.error("openSession error", { error: e instanceof Error ? e.message : e, stack: e instanceof Error ? e.stack : undefined, user: req.user, body: req.body });
-      } catch (_) { /* ignore logging errors */ }
       next(e);
     }
   }
 
-  static async closeSession(req: AuthRequest, res: Response, next: NextFunction) {
+  static async closeSession(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ) {
     try {
-      if (req.user?.type !== "company_user") return next(new ErrorHandler("Company user required", 403));
+      if (req.user?.type !== "company_user")
+        return next(new ErrorHandler("Company user required", 403));
+      if (
+        await prisma.ticket.findFirst({
+          where: {
+            served_by_id: req.user.sub,
+            status: { in: ["CALLED", "SERVING"] },
+          },
+        })
+      )
+        return next(
+          new ErrorHandler(
+            "Complete or transfer the active ticket before ending work",
+            409,
+          ),
+        );
       const activeSessions = await prisma.counterSession.findMany({
         where: { company_user_id: req.user.sub, is_active: true },
         include: { counter: true },
@@ -228,18 +392,24 @@ export class CounterController {
         data: { is_active: false, ended_at: new Date() },
       });
 
-      await Promise.all(activeSessions.map((session) =>
-        createAuditLog({
-          req,
-          companyId: session.counter.company_id,
-          branchId: session.counter.branch_id,
-          companyUserId: req.user!.sub,
-          action: "TOGGLE_STATUS",
-          entityType: "CounterSession",
-          entityId: session.id,
-          metadata: { state: "closed", counter_id: session.counter.id, counter_number: session.counter.number },
-        })
-      ));
+      await Promise.all(
+        activeSessions.map((session) =>
+          createAuditLog({
+            req,
+            companyId: session.counter.company_id,
+            branchId: session.counter.branch_id,
+            companyUserId: req.user!.sub,
+            action: "TOGGLE_STATUS",
+            entityType: "CounterSession",
+            entityId: session.id,
+            metadata: {
+              state: "closed",
+              counter_id: session.counter.id,
+              counter_number: session.counter.number,
+            },
+          }),
+        ),
+      );
 
       activeSessions.forEach((session) => {
         broadcast({
@@ -256,9 +426,8 @@ export class CounterController {
       });
 
       res.json({ success: true, message: "Session closed" });
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 }
-
-
-

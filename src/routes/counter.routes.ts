@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { CounterController } from "../controllers/counter.controller";
+import prisma from "../prisma/client";
 import { authenticate, requireCompanyAdmin, requireCompanyUser } from "../middlewares/auth.middleware";
 
 const router = Router();
+router.get("/public", async (req,res,next)=>{try{if(typeof req.query.branch_id!=="string")return res.status(400).json({message:"Branch required"});const data=await prisma.counter.findMany({where:{branch_id:req.query.branch_id,is_active:true},select:{id:true,branch_id:true,name_uz:true,name_ru:true,name_en:true,number:true,is_active:true},orderBy:{number:"asc"}});res.json({success:true,data});}catch(e){next(e);}});
 
 // Sessions
 router.post("/sessions/open", authenticate, requireCompanyUser, CounterController.openSession);

@@ -7,10 +7,12 @@ export class AuditController {
   static async list(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const companyId = req.user?.type === "company_user" ? req.user.companyId : (req.query.company_id as string | undefined);
-      const page = parseInt(req.query.page as string || "1");
-      const limit = parseInt(req.query.limit as string || "50");
+      const page = Math.max(1, Number.parseInt(String(req.query.page),10) || 1);
+      const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit),10) || 50));
       const where: Record<string, unknown> = {};
       if (companyId) where.company_id = companyId;
+      const admin = req.user?.type === "platform_user" || req.user?.roleTypes?.some(r=>["COMPANY_ADMIN","BRANCH_MANAGER","SUPERVISOR"].includes(r));
+      if (!admin) where.company_user_id = req.user!.sub;
       if (req.query.action) where.action = req.query.action;
       if (req.query.entity_type) where.entity_type = req.query.entity_type;
       if (req.query.branch_id) where.branch_id = req.query.branch_id;

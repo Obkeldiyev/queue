@@ -1,9 +1,11 @@
+import "dotenv/config";
 import express, { Application } from "express";
 import http from "http";
 import dotenv from "dotenv";
 import router from "./routes";
 import { ErrorHandlerMiddleware } from "@middlewares";
 import { initWebSocket } from "./utils/websocket";
+import { startDailyReset } from "./utils/daily-reset";
 import path from "path";
 import cors from "cors";
 import type { CorsOptions } from "cors";
@@ -43,6 +45,7 @@ const server = http.createServer(app);
 
 // WebSocket for real-time queue updates
 initWebSocket(server);
+startDailyReset();
 
 server.listen(PORT, () => {
   console.log(`✅ QMS API running on port ${PORT}`);

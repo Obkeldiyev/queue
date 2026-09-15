@@ -673,6 +673,9 @@ model Menu {
   company_id     String   @db.Uuid
   parent_id      String?  @db.Uuid
   name           String   @db.VarChar(120)
+  name_uz        String?  @db.VarChar(120)
+  name_ru        String?  @db.VarChar(120)
+  name_en        String?  @db.VarChar(120)
   label          String?  @db.VarChar(120) // Display label (translatable)
   icon_media_id  String?  @db.Uuid
   icon_class     String?  @db.VarChar(80)  // e.g. "home-icon"
@@ -1468,4 +1471,32 @@ model AuditLog {
   @@index([entity_type, entity_id])
   @@index([created_at])
   @@map("audit_logs")
+}
+
+model ServiceConversation {
+  id String @id @default(uuid()) @db.Uuid
+  company_id String @db.Uuid
+  operator_id String @db.Uuid
+  branch_id String? @db.Uuid
+  token String @unique
+  customer_name String?
+  channel String @default("online")
+  evidence Json?
+  status String @default("INVITED")
+  created_at DateTime @default(now())
+  completed_at DateTime?
+  messages ServiceMessage[]
+  @@index([company_id, operator_id, created_at])
+  @@map("service_conversations")
+}
+
+model ServiceMessage {
+  id String @id @default(uuid()) @db.Uuid
+  conversation_id String @db.Uuid
+  sender String
+  text String
+  created_at DateTime @default(now())
+  conversation ServiceConversation @relation(fields:[conversation_id], references:[id], onDelete:Cascade)
+  @@index([conversation_id, created_at])
+  @@map("service_messages")
 }

@@ -76,7 +76,9 @@ export class DeviceController {
       if (!device) return next(new ErrorHandler("Device not found", 404));
       // Strip auth_token from response
       const { auth_token: _, ...safeDevice } = device;
-      res.json({ success: true, data: safeDevice });
+      const templateId = (device.settings as any)?.ticket_template_id;
+      const receipt = await prisma.ticketTemplate.findFirst({ where: { company_id: device.company_id, ...(templateId ? { id: templateId } : { is_default: true }) } });
+      res.json({ success: true, data: { ...safeDevice, receipt } });
     } catch (e) { next(e); }
   }
 

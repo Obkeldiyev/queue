@@ -1,7 +1,10 @@
+import prisma from "../prisma/client";
 import { WebSocketServer, WebSocket } from "ws";
 import { Server } from "http";
 
 export type WsEventType =
+  | "resource:changed"
+  | "queue:reset"
   | "ticket:issued"
   | "ticket:called"
   | "ticket:completed"
@@ -36,8 +39,12 @@ export function initWebSocket(server: Server): WebSocketServer {
 
     // Send a ping every 30s to keep the connection alive through nginx/load-balancers.
     // The client does not need to handle pings — the ws library handles pong automatically.
+    let alive = true;
+    ws.on("pong", () => { alive = true; });
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
+        if (!alive) { ws.terminate(); return; }
+        alive = false;
         ws.ping();
       } else {
         clearInterval(pingInterval);
@@ -55,13 +62,17 @@ export function initWebSocket(server: Server): WebSocketServer {
 
 export function broadcast(message: WsMessage): void {
   if (!wss) return;
+  if (message.branchId && !message.companyId) {
+    void prisma.branch.findUnique({where:{id:message.branchId},select:{company_id:true}}).then(branch=>{if(branch)broadcast({...message,companyId:branch.company_id});}).catch(e=>console.error("[ws]",e.message));
+    return;
+  }
   const data = JSON.stringify(message);
   wss.clients.forEach((client) => {
     if (client.readyState !== WebSocket.OPEN) return;
     const c = client as WebSocket & { branchId?: string; companyId?: string };
     // Send to matching branch/company subscribers, or broadcast if no filter
-    const matchesBranch = !message.branchId || c.branchId === message.branchId;
-    const matchesCompany = !message.companyId || c.companyId === message.companyId;
+    const matchesBranch = !c.branchId || !message.branchId || c.branchId === message.branchId;
+    const matchesCompany = c.companyId ? c.companyId === message.companyId : !!c.branchId && c.branchId === message.branchId;
     if (matchesBranch && matchesCompany) {
       client.send(data);
     }

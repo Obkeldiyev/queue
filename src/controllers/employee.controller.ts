@@ -7,7 +7,7 @@ import type { CreateCompanyUserDto, UpdateCompanyUserDto, CreateCompanyRoleDto }
 import type { AuthRequest } from "@middlewares";
 
 const USER_SELECT = {
-  id: true, first_name: true, last_name: true, email: true, phone: true,
+  id: true, first_name: true, last_name: true, email: true, phone: true, avatar_url: true,
   status: true, branch_id: true, company_id: true, default_counter_id: true,
   last_login_at: true, created_at: true,
   roles: { include: { company_role: { select: { id: true, name: true, type: true } } } },
@@ -27,7 +27,7 @@ export class EmployeeController {
       const users = await prisma.companyUser.findMany({
         where,
         orderBy: { created_at: "asc" },
-        select: { ...USER_SELECT, allowed_service_ids: true } as any,
+        select: { ...USER_SELECT, allowed_service_ids: true, allowed_menu_ids: true } as any,
       });
       res.json({ success: true, data: users });
     } catch (e) { next(e); }
@@ -52,14 +52,18 @@ export class EmployeeController {
           last_name: body.last_name,
           email: body.email,
           phone: body.phone,
+          avatar_url: body.avatar_url ?? undefined,
           password_hash,
+          allowed_service_ids: (body as any).allowed_service_ids ?? undefined,
+          allowed_menu_ids: (body as any).allowed_menu_ids ?? undefined,
         },
-        select: { id: true, first_name: true, last_name: true, email: true, status: true, branch_id: true, company_id: true, created_at: true },
+        select: { ...USER_SELECT, allowed_service_ids: true, allowed_menu_ids: true } as any,
       });
 
+      const createdUserId = String(user.id);
       if (body.role_ids?.length) {
         await prisma.companyUserRole.createMany({
-          data: body.role_ids.map((rid) => ({ company_user_id: user.id, company_role_id: rid })),
+          data: body.role_ids.map((rid) => ({ company_user_id: createdUserId, company_role_id: rid })),
         });
       } else {
         await ensureDefaultCompanyRoles(companyId);
@@ -71,7 +75,7 @@ export class EmployeeController {
         });
         if (defaultRole) {
           await prisma.companyUserRole.create({
-            data: { company_user_id: user.id, company_role_id: defaultRole.id },
+            data: { company_user_id: createdUserId, company_role_id: defaultRole.id },
           });
         }
       }
@@ -79,7 +83,7 @@ export class EmployeeController {
       await createAuditLog({
         req, companyId,
         companyUserId: req.user?.type === "company_user" ? req.user.sub : undefined,
-        action: "CREATE", entityType: "CompanyUser", entityId: user.id,
+        action: "CREATE", entityType: "CompanyUser", entityId: createdUserId,
       });
 
       res.status(201).json({ success: true, data: user });
@@ -91,7 +95,7 @@ export class EmployeeController {
     try {
       const user = await prisma.companyUser.findUnique({
         where: { id: req.params.id },
-        select: { ...USER_SELECT, allowed_service_ids: true } as any,
+        select: { ...USER_SELECT, allowed_service_ids: true, allowed_menu_ids: true } as any,
       });
       if (!user) return next(new ErrorHandler("Employee not found", 404));
       res.json({ success: true, data: user });
@@ -101,27 +105,54 @@ export class EmployeeController {
   // PATCH /employees/:id
   static async update(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const body = req.body as UpdateCompanyUserDto;
-      const user = await prisma.companyUser.update({
-        where: { id: req.params.id },
-        data: {
-          ...(body.branch_id !== undefined && { branch_id: body.branch_id }),
-          ...(body.first_name && { first_name: body.first_name }),
-          ...(body.last_name && { last_name: body.last_name }),
-          ...(body.phone !== undefined && { phone: body.phone }),
-          ...(body.status && { status: body.status }),
-          ...(Object.prototype.hasOwnProperty.call(body, 'default_counter_id')
-            ? { default_counter_id: (body as any).default_counter_id }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(body, 'allowed_service_ids')
-            ? { allowed_service_ids: (body as any).allowed_service_ids }
-            : {}),
-          // Allow admin to reset password
-          ...((body as any).password
-            ? { password_hash: hashPassword((body as any).password) }
-            : {}),
-        } as any,
-        select: { id: true, first_name: true, last_name: true, email: true, status: true } as any,
+      const body = req.body as UpdateCompanyUserDto & { password?: string };
+      const existing = await prisma.companyUser.findUnique({ where: { id: req.params.id } });
+      if (!existing) return next(new ErrorHandler("Employee not found", 404));
+
+      if (body.email && body.email !== existing.email) {
+        const duplicate = await prisma.companyUser.findFirst({
+          where: { company_id: existing.company_id, email: body.email, id: { not: existing.id } },
+        });
+        if (duplicate) return next(new ErrorHandler("Email already registered in this company", 409));
+      }
+
+      const user = await prisma.$transaction(async (tx) => {
+        const updated = await tx.companyUser.update({
+          where: { id: req.params.id },
+          data: {
+            ...(Object.prototype.hasOwnProperty.call(body, "branch_id") ? { branch_id: body.branch_id || null } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "first_name") ? { first_name: body.first_name } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "last_name") ? { last_name: body.last_name } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "email") ? { email: body.email } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "phone") ? { phone: body.phone || null } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "avatar_url") ? { avatar_url: body.avatar_url || null } : {}),
+            ...(body.status ? { status: body.status } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "default_counter_id")
+              ? { default_counter_id: (body as any).default_counter_id || null }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "allowed_service_ids")
+              ? { allowed_service_ids: (body as any).allowed_service_ids }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "allowed_menu_ids")
+              ? { allowed_menu_ids: (body as any).allowed_menu_ids }
+              : {}),
+            ...(body.password ? { password_hash: hashPassword(body.password) } : {}),
+          } as any,
+          select: { ...USER_SELECT, allowed_service_ids: true, allowed_menu_ids: true } as any,
+        });
+        if (Array.isArray(body.role_ids)) {
+          await tx.companyUserRole.deleteMany({ where: { company_user_id: req.params.id } });
+          if (body.role_ids.length) {
+            await tx.companyUserRole.createMany({
+              data: body.role_ids.map((rid) => ({ company_user_id: req.params.id, company_role_id: rid })),
+              skipDuplicates: true,
+            });
+          }
+        }
+        return tx.companyUser.findUniqueOrThrow({
+          where: { id: req.params.id },
+          select: { ...USER_SELECT, allowed_service_ids: true, allowed_menu_ids: true } as any,
+        });
       });
       res.json({ success: true, data: user });
     } catch (e) { next(e); }

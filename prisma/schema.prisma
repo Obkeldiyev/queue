@@ -396,11 +396,14 @@ model CompanyUser {
   email         String     @db.VarChar(200)
   phone         String?    @db.VarChar(30)
   password_hash String     @db.VarChar(255)
-  avatar_url    String?    @db.VarChar(500)
+  avatar_url    String?    @db.Text
   status        UserStatus @default(ACTIVE)
   // JSON array of service UUIDs this operator is allowed to handle.
   // null = no restriction (can serve all services on their counter)
   allowed_service_ids Json?
+  // JSON array of menu UUIDs this operator is allowed to handle.
+  // Selecting a parent menu grants access to queue-linked descendants.
+  allowed_menu_ids Json?
   last_login_at DateTime?
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt
@@ -1494,7 +1497,8 @@ model ServiceMessage {
   id String @id @default(uuid()) @db.Uuid
   conversation_id String @db.Uuid
   sender String
-  text String
+  text String @default("")
+  attachment Json?
   created_at DateTime @default(now())
   conversation ServiceConversation @relation(fields:[conversation_id], references:[id], onDelete:Cascade)
   @@index([conversation_id, created_at])

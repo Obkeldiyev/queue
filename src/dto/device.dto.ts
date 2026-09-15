@@ -12,6 +12,8 @@ export interface CreateDeviceDto {
 
 export interface UpdateDeviceDto {
   name?: string;
+  device_type?: CreateDeviceDto["device_type"];
+  serial_number?: string | null;
   counter_id?: string;
   ip_address?: string;
   mac_address?: string;

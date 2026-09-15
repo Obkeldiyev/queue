@@ -7,6 +7,7 @@ export type WsEventType =
   | "queue:reset"
   | "ticket:issued"
   | "ticket:called"
+  | "ticket:serving"
   | "ticket:completed"
   | "ticket:no_show"
   | "ticket:cancelled"

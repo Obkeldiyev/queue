@@ -28,6 +28,52 @@ const notify = (companyId: string, branchId?: string | null) =>
     branchId: branchId || undefined,
     payload: { resource: "operations" },
   });
+
+const CHAT_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const CHAT_ATTACHMENT_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
+function cleanFileName(name: string) {
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim();
+  return (cleaned || "attachment").slice(0, 180);
+}
+
+function parseChatAttachment(input: unknown) {
+  if (!input) return null;
+  if (typeof input !== "object") throw new ErrorHandler("Invalid attachment", 400);
+  const attachment = input as { name?: unknown; data?: unknown };
+  const name = cleanFileName(String(attachment.name || "attachment"));
+  const data = String(attachment.data || "");
+  const match = /^data:([^;]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(data);
+  if (!match) throw new ErrorHandler("Attachment must be a base64 data URL", 400);
+  const mime = match[1].toLowerCase();
+  if (!CHAT_ATTACHMENT_MIMES.has(mime)) throw new ErrorHandler("Unsupported attachment type", 400);
+  const base64 = match[2].replace(/[\r\n]/g, "");
+  const size = Buffer.byteLength(base64, "base64");
+  if (size <= 0 || size > CHAT_ATTACHMENT_MAX_BYTES)
+    throw new ErrorHandler("Attachment must be 1 byte to 5 MB", 400);
+  return { name, mime_type: mime, size_bytes: size, data: `data:${mime};base64,${base64}` };
+}
+
+function chatMessageData(req: AuthRequest, sender: "customer" | "operator") {
+  const text = String(req.body.text || "").trim();
+  if (text.length > 4000)
+    throw new ErrorHandler("Message text must be 4000 characters or less", 400);
+  const attachment = parseChatAttachment(req.body.attachment);
+  if (!text && !attachment) throw new ErrorHandler("Send a message, a file, or both", 400);
+  return attachment ? { sender, text, attachment } : { sender, text };
+}
 async function conversation(req: AuthRequest, publicAccess = false) {
   const c = await prisma.serviceConversation.findUnique({
     where: publicAccess ? { token: req.params.token } : { id: req.params.id },
@@ -86,9 +132,7 @@ router.post(
   "/chat/:token/messages",
   wrap(async (req, res) => {
     const c = await conversation(req, true);
-    const text = String(req.body.text || "").trim();
-    if (!text || text.length > 4000)
-      throw new ErrorHandler("Message must contain 1–4000 characters", 400);
+    const message = chatMessageData(req, "customer");
     await prisma.$transaction(async (tx) => {
       const locked = await tx.serviceConversation.updateMany({
         where: { id: c.id, status: "ACTIVE" },
@@ -100,7 +144,7 @@ router.post(
           409,
         );
       await tx.serviceMessage.create({
-        data: { conversation_id: c.id, sender: "customer", text },
+        data: { conversation_id: c.id, ...message },
       });
     });
     notify(c.company_id, c.branch_id);
@@ -265,9 +309,7 @@ router.post(
     const c = await conversation(req);
     if (c.operator_id !== req.user!.sub)
       throw new ErrorHandler("Only the assigned operator can reply", 403);
-    const text = String(req.body.text || "").trim();
-    if (!text || text.length > 4000)
-      throw new ErrorHandler("Message must contain 1–4000 characters", 400);
+    const message = chatMessageData(req, "operator");
     await prisma.$transaction(async (tx) => {
       const locked = await tx.serviceConversation.updateMany({
         where: { id: c.id, status: "ACTIVE" },
@@ -276,7 +318,7 @@ router.post(
       if (!locked.count)
         throw new ErrorHandler("Customer must join before you reply", 409);
       await tx.serviceMessage.create({
-        data: { conversation_id: c.id, sender: "operator", text },
+        data: { conversation_id: c.id, ...message },
       });
     });
     notify(c.company_id, c.branch_id);

@@ -90,6 +90,8 @@ export class DeviceController {
         where: { id: req.params.id },
         data: {
           name: body.name,
+          ...(body.device_type ? { device_type: body.device_type as any } : {}),
+          ...(Object.prototype.hasOwnProperty.call(body, "serial_number") ? { serial_number: body.serial_number || null } : {}),
           counter_id: body.counter_id,
           ip_address: body.ip_address,
           mac_address: body.mac_address,

@@ -153,6 +153,7 @@ export class QueueController {
           name_ru: body.name_ru,
           name_en: body.name_en,
           prefix: body.prefix,
+          ...(Object.prototype.hasOwnProperty.call(body, "service_id") ? { service_id: (body as any).service_id || null } : {}),
           number_format: body.number_format,
           queue_type: body.queue_type as any,
           daily_limit: body.daily_limit,
@@ -356,7 +357,7 @@ export class QueueController {
           await tx.ticket.findFirst({
             where: {
               counter_id: counterId,
-              status: { in: ["CALLED", "SERVING"] },
+              status: "SERVING",
             },
           })
         )
@@ -364,18 +365,75 @@ export class QueueController {
             "Complete or transfer the current ticket first",
             409,
           );
+
+        const previousCalled = await tx.ticket.findMany({
+          where: {
+            counter_id: counterId,
+            status: "CALLED",
+          },
+          orderBy: { called_at: "asc" },
+          select: { id: true },
+        });
+        if (previousCalled.length) {
+          const idsToClose = previousCalled.map((t) => t.id);
+          const changed = await tx.ticket.updateMany({
+            where: { id: { in: idsToClose }, status: "CALLED" },
+            data: { status: "NO_SHOW", completed_at: new Date() },
+          });
+          if (changed.count) {
+            await tx.ticketHistory.createMany({
+              data: idsToClose.map((ticket_id) => ({
+                ticket_id,
+                from_status: "CALLED",
+                to_status: "NO_SHOW",
+                changed_by: req.user!.sub,
+                changed_type: "company_user",
+                note: "Auto no-show when operator called next ticket",
+              })),
+            });
+          }
+        }
         const operator = await tx.companyUser.findUnique({
           where: { id: req.user!.sub },
+          select: { allowed_service_ids: true, allowed_menu_ids: true, company_id: true } as any,
         });
-        const allowed = Array.isArray(operator?.allowed_service_ids)
-          ? operator.allowed_service_ids
+        const allowedServicesOrQueues = Array.isArray((operator as any)?.allowed_service_ids)
+          ? ((operator as any).allowed_service_ids as string[])
           : [];
+        const allowedMenuIds = Array.isArray((operator as any)?.allowed_menu_ids)
+          ? ((operator as any).allowed_menu_ids as string[])
+          : [];
+        let allowedQueueGroupIdsFromMenus = new Set<string>();
+        if (allowedMenuIds.length) {
+          const menus = await tx.menu.findMany({
+            where: { company_id: req.user!.companyId! },
+            select: { id: true, parent_id: true, queue_group_id: true },
+          });
+          const children = new Map<string, typeof menus[number][]>();
+          for (const menu of menus) {
+            if (!menu.parent_id) continue;
+            const list = children.get(menu.parent_id) || [];
+            list.push(menu);
+            children.set(menu.parent_id, list);
+          }
+          const visit = (menuId: string) => {
+            const menu = menus.find((m) => m.id === menuId);
+            if (menu?.queue_group_id) allowedQueueGroupIdsFromMenus.add(menu.queue_group_id);
+            for (const child of children.get(menuId) || []) visit(child.id);
+          };
+          for (const menuId of allowedMenuIds) visit(menuId);
+        }
+        const isRestricted = allowedServicesOrQueues.length > 0 || allowedMenuIds.length > 0;
         const ids = counter.queue_groups
-          .filter(
-            (q) =>
-              q.queue_group.is_active &&
-              (!allowed.length || allowed.includes(q.queue_group.service_id!)),
-          )
+          .filter((q) => {
+            if (!q.queue_group.is_active) return false;
+            if (!isRestricted) return true;
+            return (
+              allowedServicesOrQueues.includes(q.queue_group_id) ||
+              allowedServicesOrQueues.includes(q.queue_group.service_id!) ||
+              allowedQueueGroupIdsFromMenus.has(q.queue_group_id)
+            );
+          })
           .map((q) => q.queue_group_id);
         if (!ids.length)
           throw new ErrorHandler("No permitted services at this counter", 403);
@@ -686,29 +744,48 @@ export class QueueController {
         );
       }
       const now = new Date();
-      const updated = await prisma.ticket.update({
-        where: { id: ticket.id },
-        data: {
-          status: "SERVING",
-          serving_started_at: now,
-          served_by_id:
-            req.user?.type === "company_user"
-              ? req.user.sub
-              : ticket.served_by_id,
-        },
-        include: { queue_group: { include: { service: true } }, counter: true },
-      });
-      await prisma.ticketHistory.create({
-        data: {
-          ticket_id: ticket.id,
-          from_status: "CALLED",
-          to_status: "SERVING",
-          changed_by: req.user?.sub,
-          changed_type: "company_user",
-        },
+      const updated = await prisma.$transaction(async (tx) => {
+        if (ticket.counter_id) {
+          const serving = await tx.ticket.findFirst({
+            where: {
+              counter_id: ticket.counter_id,
+              status: "SERVING",
+              id: { not: ticket.id },
+            },
+            select: { id: true, ticket_number: true },
+          });
+          if (serving) {
+            throw new ErrorHandler("Complete the active ticket before starting another one", 409);
+          }
+        }
+        const changed = await tx.ticket.updateMany({
+          where: { id: ticket.id, status: "CALLED" },
+          data: {
+            status: "SERVING",
+            serving_started_at: now,
+            served_by_id:
+              req.user?.type === "company_user"
+                ? req.user.sub
+                : ticket.served_by_id,
+          },
+        });
+        if (!changed.count) throw new ErrorHandler("Ticket was already updated", 409);
+        await tx.ticketHistory.create({
+          data: {
+            ticket_id: ticket.id,
+            from_status: "CALLED",
+            to_status: "SERVING",
+            changed_by: req.user?.sub,
+            changed_type: "company_user",
+          },
+        });
+        return tx.ticket.findUniqueOrThrow({
+          where: { id: ticket.id },
+          include: { queue_group: { include: { service: true } }, counter: true },
+        });
       });
       broadcast({
-        event: "ticket:called",
+        event: "ticket:serving",
         branchId: updated.branch_id,
         companyId: updated.queue_group?.company_id,
         payload: {

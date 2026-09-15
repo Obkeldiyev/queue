@@ -22,6 +22,7 @@ export interface UpdateQueueGroupDto {
   name_ru?: string;
   name_en?: string;
   prefix?: string;
+  service_id?: string | null;
   number_format?: string;
   queue_type?: "SEQUENTIAL" | "PRIORITY" | "SMART" | "APPOINTMENT";
   daily_limit?: number;

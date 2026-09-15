@@ -1,0 +1,1 @@
+ALTER TABLE "company_users" ADD COLUMN IF NOT EXISTS "allowed_menu_ids" JSONB;

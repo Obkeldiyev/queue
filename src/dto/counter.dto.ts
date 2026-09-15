@@ -8,6 +8,7 @@ export interface CreateCounterDto {
 }
 
 export interface UpdateCounterDto {
+  branch_id?: string;
   name_uz?: string;
   name_ru?: string;
   name_en?: string;

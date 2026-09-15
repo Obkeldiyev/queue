@@ -129,6 +129,7 @@ export class CounterController {
       const counter = await prisma.counter.update({
         where: { id: req.params.id },
         data: {
+          ...(body.branch_id !== undefined && { branch_id: body.branch_id }),
           ...(body.name_uz !== undefined && { name_uz: body.name_uz }),
           ...(body.name_ru !== undefined && { name_ru: body.name_ru }),
           ...(body.name_en !== undefined && { name_en: body.name_en }),

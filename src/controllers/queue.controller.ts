@@ -27,20 +27,29 @@ function jsonStringArray(value: unknown): string[] {
   return [];
 }
 
-async function allowedQueueIdsForOperator(userId: string, companyId: string, branchId?: string): Promise<string[] | null> {
+async function operatorAccess(userId: string, companyId: string, branchId?: string) {
   const operator = await prisma.companyUser.findUnique({
     where: { id: userId },
     select: { allowed_service_ids: true, allowed_menu_ids: true } as any,
   });
   const serviceAccessValue = (operator as any)?.allowed_service_ids;
   const menuAccessValue = (operator as any)?.allowed_menu_ids;
-  const isRestricted = serviceAccessValue !== null && serviceAccessValue !== undefined || menuAccessValue !== null && menuAccessValue !== undefined;
+  const isRestricted =
+    serviceAccessValue !== null &&
+    serviceAccessValue !== undefined ||
+    menuAccessValue !== null &&
+    menuAccessValue !== undefined;
   const allowedServicesOrQueues = jsonStringArray(serviceAccessValue);
   const allowedMenuIds = jsonStringArray(menuAccessValue);
-  if (!isRestricted) return null;
-  if (!allowedServicesOrQueues.length && !allowedMenuIds.length) return [];
+  if (!isRestricted) {
+    return { isRestricted: false, queueIds: null as string[] | null, menuIds: [] as string[], directQueueIds: [] as string[] };
+  }
+  if (!allowedServicesOrQueues.length && !allowedMenuIds.length) {
+    return { isRestricted: true, queueIds: [] as string[], menuIds: [] as string[], directQueueIds: [] as string[] };
+  }
 
   const menuQueueIds = new Set<string>();
+  const permittedMenuIds = new Set<string>();
   if (allowedMenuIds.length) {
     const menus = await prisma.menu.findMany({
       where: { company_id: companyId },
@@ -55,24 +64,41 @@ async function allowedQueueIdsForOperator(userId: string, companyId: string, bra
     }
     const visit = (menuId: string) => {
       const menu = menus.find((m) => m.id === menuId);
-      if (menu?.queue_group_id) menuQueueIds.add(menu.queue_group_id);
+      if (!menu) return;
+      permittedMenuIds.add(menu.id);
+      if (menu.queue_group_id) menuQueueIds.add(menu.queue_group_id);
       for (const child of children.get(menuId) || []) visit(child.id);
     };
     for (const menuId of allowedMenuIds) visit(menuId);
   }
 
-  const groups = await prisma.queueGroup.findMany({
-    where: {
-      company_id: companyId,
-      ...(branchId ? { branch_id: branchId } : {}),
-      OR: [
-        ...(allowedServicesOrQueues.length ? [{ id: { in: allowedServicesOrQueues } }, { service_id: { in: allowedServicesOrQueues } }] : []),
-        ...(menuQueueIds.size ? [{ id: { in: Array.from(menuQueueIds) } }] : []),
-      ],
-    },
-    select: { id: true },
-  });
-  return groups.map((g) => g.id);
+  const directGroups = allowedServicesOrQueues.length
+    ? await prisma.queueGroup.findMany({
+        where: {
+          company_id: companyId,
+          ...(branchId ? { branch_id: branchId } : {}),
+          OR: [{ id: { in: allowedServicesOrQueues } }, { service_id: { in: allowedServicesOrQueues } }],
+        },
+        select: { id: true },
+      })
+    : [];
+  const menuGroups = menuQueueIds.size
+    ? await prisma.queueGroup.findMany({
+        where: {
+          company_id: companyId,
+          ...(branchId ? { branch_id: branchId } : {}),
+          id: { in: Array.from(menuQueueIds) },
+        },
+        select: { id: true },
+      })
+    : [];
+  const directQueueIds = directGroups.map((g) => g.id);
+  const queueIds = Array.from(new Set([...directQueueIds, ...menuGroups.map((g) => g.id)]));
+  return { isRestricted: true, queueIds, menuIds: Array.from(permittedMenuIds), directQueueIds };
+}
+
+async function allowedQueueIdsForOperator(userId: string, companyId: string, branchId?: string): Promise<string[] | null> {
+  return (await operatorAccess(userId, companyId, branchId)).queueIds;
 }
 
 function generateTicketNumber(
@@ -318,6 +344,15 @@ export class QueueController {
             400,
           );
         }
+        let issuingMenuId: string | null = null;
+        if (body.menu_id) {
+          const menu = await tx.menu.findFirst({
+            where: { id: body.menu_id, company_id: group.company_id, queue_group_id: group.id },
+            select: { id: true },
+          });
+          if (!menu) throw new ErrorHandler("Invalid menu for this queue", 400);
+          issuingMenuId = menu.id;
+        }
 
         const startOfDay = dayBoundary(
           new Date(),
@@ -339,6 +374,7 @@ export class QueueController {
         const created = await tx.ticket.create({
           data: {
             queue_group_id: group.id,
+            menu_id: issuingMenuId,
             branch_id: group.branch_id,
             customer_id: body.customer_id,
             ticket_number: ticketNumber,
@@ -348,6 +384,7 @@ export class QueueController {
           },
           include: {
             queue_group: { include: { service: true } },
+            issued_menu: true,
             branch: { select: { id: true, name_uz: true } },
           },
         });
@@ -455,54 +492,25 @@ export class QueueController {
             });
           }
         }
-        const operator = await tx.companyUser.findUnique({
-          where: { id: req.user!.sub },
-          select: { allowed_service_ids: true, allowed_menu_ids: true, company_id: true } as any,
-        });
-        const serviceAccessValue = (operator as any)?.allowed_service_ids;
-        const menuAccessValue = (operator as any)?.allowed_menu_ids;
-        const isRestricted = serviceAccessValue !== null && serviceAccessValue !== undefined || menuAccessValue !== null && menuAccessValue !== undefined;
-        const allowedServicesOrQueues = jsonStringArray(serviceAccessValue);
-        const allowedMenuIds = jsonStringArray(menuAccessValue);
-        let allowedQueueGroupIdsFromMenus = new Set<string>();
-        if (allowedMenuIds.length) {
-          const menus = await tx.menu.findMany({
-            where: { company_id: req.user!.companyId! },
-            select: { id: true, parent_id: true, queue_group_id: true },
-          });
-          const children = new Map<string, typeof menus[number][]>();
-          for (const menu of menus) {
-            if (!menu.parent_id) continue;
-            const list = children.get(menu.parent_id) || [];
-            list.push(menu);
-            children.set(menu.parent_id, list);
-          }
-          const visit = (menuId: string) => {
-            const menu = menus.find((m) => m.id === menuId);
-            if (menu?.queue_group_id) allowedQueueGroupIdsFromMenus.add(menu.queue_group_id);
-            for (const child of children.get(menuId) || []) visit(child.id);
-          };
-          for (const menuId of allowedMenuIds) visit(menuId);
-        }
+        const access = await operatorAccess(req.user!.sub, req.user!.companyId!, counter.branch_id);
         const ids = counter.queue_groups
-          .filter((q) => {
-            if (!q.queue_group.is_active) return false;
-            if (!isRestricted) return true;
-            return (
-              allowedServicesOrQueues.includes(q.queue_group_id) ||
-              allowedServicesOrQueues.includes(q.queue_group.service_id!) ||
-              allowedQueueGroupIdsFromMenus.has(q.queue_group_id)
-            );
-          })
+          .filter((q) => q.queue_group.is_active && (!access.isRestricted || access.queueIds!.includes(q.queue_group_id)))
           .map((q) => q.queue_group_id);
         if (!ids.length)
           throw new ErrorHandler("No permitted services at this counter", 403);
         for (let attempt = 0; attempt < 5; attempt++) {
+          const accessFilters = access.isRestricted
+            ? [
+                ...(access.directQueueIds.length ? [{ queue_group_id: { in: access.directQueueIds } }] : []),
+                ...(access.menuIds.length ? [{ menu_id: { in: access.menuIds } }] : []),
+              ]
+            : [];
           const candidate = await tx.ticket.findFirst({
             where: {
               queue_group_id: { in: ids },
               status: "WAITING",
               OR: [{ counter_id: null }, { counter_id: counterId }],
+              ...(accessFilters.length ? { AND: [{ OR: accessFilters }] } : {}),
             },
             orderBy: [{ priority: "desc" }, { created_at: "asc" }],
           });
@@ -533,6 +541,7 @@ export class QueueController {
             where: { id: candidate.id },
             include: {
               queue_group: { include: { service: true } },
+              issued_menu: true,
               counter: true,
             },
           });
@@ -575,6 +584,9 @@ export class QueueController {
       const {
         branch_id,
         queue_group_id,
+        queue_group_ids,
+        menu_id,
+        menu_ids,
         status,
         page = "1",
         limit = "50",
@@ -589,6 +601,15 @@ export class QueueController {
       const where: Record<string, unknown> = {};
       if (branch_id) where.branch_id = branch_id;
       if (queue_group_id) where.queue_group_id = queue_group_id;
+      if (queue_group_ids) {
+        const ids = String(queue_group_ids).split(",").map((id) => id.trim()).filter(Boolean);
+        if (ids.length) where.queue_group_id = { in: ids };
+      }
+      if (menu_id) where.menu_id = menu_id;
+      if (menu_ids) {
+        const ids = String(menu_ids).split(",").map((id) => id.trim()).filter(Boolean);
+        if (ids.length) where.menu_id = { in: ids };
+      }
       if (req.user?.type === "company_user" && req.user?.companyId) {
         const permittedQueueIds = await allowedQueueIdsForOperator(req.user.sub, req.user.companyId, branch_id as string | undefined);
         if (permittedQueueIds !== null) {
@@ -618,6 +639,7 @@ export class QueueController {
               : { updated_at: "desc" },
           include: {
             queue_group: { include: { service: true } },
+            issued_menu: true,
             counter: {
               select: {
                 id: true,

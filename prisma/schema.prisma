@@ -698,6 +698,7 @@ model Menu {
   page       Page?      @relation(fields: [page_id], references: [id])
   queue_group QueueGroup? @relation(fields: [queue_group_id], references: [id])
   icon_media MediaFile? @relation("MenuIcon", fields: [icon_media_id], references: [id])
+  issued_tickets Ticket[] @relation("TicketIssuedMenu")
 
   @@index([company_id])
   @@index([parent_id])
@@ -849,6 +850,7 @@ model TicketTemplate {
 model Ticket {
   id               String       @id @default(uuid()) @db.Uuid
   queue_group_id   String       @db.Uuid
+  menu_id          String?      @db.Uuid
   branch_id        String       @db.Uuid
   counter_id       String?      @db.Uuid
   counter_session_id String?    @db.Uuid
@@ -869,6 +871,7 @@ model Ticket {
   updated_at       DateTime     @updatedAt
 
   queue_group     QueueGroup       @relation(fields: [queue_group_id], references: [id])
+  issued_menu     Menu?            @relation("TicketIssuedMenu", fields: [menu_id], references: [id], onDelete: SetNull)
   branch          Branch           @relation(fields: [branch_id], references: [id])
   counter         Counter?         @relation(fields: [counter_id], references: [id])
   counter_session CounterSession?  @relation(fields: [counter_session_id], references: [id])
@@ -879,6 +882,7 @@ model Ticket {
   order           Order?
 
   @@index([queue_group_id])
+  @@index([menu_id])
   @@index([branch_id])
   @@index([status])
   @@index([ticket_number])

@@ -39,6 +39,7 @@ export interface UpdateQueueGroupDto {
 
 export interface IssueTicketDto {
   queue_group_id: string;
+  menu_id?: string;
   branch_id: string;
   customer_id?: string;
   priority?: number;
